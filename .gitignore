@@ -1,0 +1,29 @@
+# 含数据库密钥，绝对不能提交
+.env
+.env.local
+.env.*.local
+
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# 构建/同步过程日志（本地产物，不提交）
+build*.log
+sync*.log
+tsc*.log
+_server*.log
+cp.log
+fetch_prev.log
+
+# 临时产物
+*.timestamp-*.mjs
+_online_index.html
+_shots/
+
+# 部署发布副本（由 build + sync-site 生成，不入库）
+lawyer-workbench-site/
+lawyer-workbench-site-v3/
+
+# 调试/核验草稿与产物（scripts 下划线前缀文件，可能含敏感输出）
+scripts/_*
