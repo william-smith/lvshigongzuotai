@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { MaterialsView } from './MaterialsView'
-import { daysUntil, fmtDate, fmtMoney, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
+import { daysUntil, fmtDate, fmtDateTime, fmtMoney, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
 
 type Tab = 'overview' | 'timeline' | 'expense' | 'material'
 
@@ -221,7 +221,7 @@ export function CaseDetail({
                         <span className="absolute -left-5 top-1.5 w-2.5 h-2.5 rounded-full bg-brand ring-4 ring-white" />
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <div className="text-2xs text-ink-3">{fmtDate(t.at)}</div>
+                            <div className="text-2xs text-ink-3">{fmtDateTime(t.at)}</div>
                             <div className="text-sm text-ink-2 leading-relaxed mt-0.5">
                               <SecretText mask={t.content_mask} enc={t.content_enc} linkPhone />
                             </div>

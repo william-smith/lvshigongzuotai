@@ -128,6 +128,14 @@ export function fmtDate(d?: string | null): string {
   return d.slice(0, 10)
 }
 
+/** 日期时间：把 `YYYY-MM-DD` / `YYYY-MM-DDTHH:MM` / `YYYY-MM-DDTHH:MM:SS(.sss)(Z)` 规整成 `YYYY-MM-DD HH:MM` */
+export function fmtDateTime(d?: string | null): string {
+  if (!d) return '—'
+  const [datePart, timePart = ''] = d.split('T')
+  if (!timePart) return datePart // 仅日期（旧数据）
+  return `${datePart} ${timePart.slice(0, 5)}`
+}
+
 export function fmtMoney(n?: number | null): string {
   if (n === null || n === undefined) return '—'
   return '¥' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })

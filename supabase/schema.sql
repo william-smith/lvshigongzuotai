@@ -59,7 +59,7 @@ create index if not exists idx_contacts_mask on public.contacts (phone_mask);
 create table if not exists public.timeline (
   id             bigint primary key,
   case_id        bigint references public.cases(id) on delete cascade,
-  at             date,
+  at             timestamp,
   content_mask   text,
   content_enc    text,
   created_at     timestamptz default now()

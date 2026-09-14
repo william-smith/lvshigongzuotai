@@ -22,12 +22,29 @@ interface FormState {
   content: string
 }
 
-const emptyForm: FormState = { at: new Date().toISOString().slice(0, 10), content: '' }
+/** 新建节点默认时间：今天 09:00（取本地时区，datetime-local 直接吃这个值） */
+function defaultAt(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T09:00`
+}
+
+/** 把任意 at 字符串规整成 datetime-local 接受的 `YYYY-MM-DDTHH:MM`：
+ *  - 旧数据只有日期（如 2026-03-11）→ 补足 09:00
+ *  - 带秒/时区（如 2026-03-11T09:00:00.000Z）→ 只截到分钟 */
+function toDateTimeLocal(s: string | null | undefined): string {
+  if (!s) return ''
+  const [datePart, timePart = ''] = s.split('T')
+  const time = timePart ? timePart.slice(0, 5) : '09:00'
+  return `${datePart}T${time}`
+}
+
+const emptyForm: FormState = { at: defaultAt(), content: '' }
 
 function toForm(t: TimelineRow | null): FormState {
   if (!t) return emptyForm
   return {
-    at: t.at ?? '',
+    at: toDateTimeLocal(t.at),
     content: t.content_mask ?? '',
   }
 }
@@ -213,10 +230,10 @@ export function TimelineEditor({ mode, initial, caseId, onClose, onSaved, onDele
           ) : (
             <>
               <div>
-                <div className="text-xs text-ink-2 font-medium mb-1.5">日期</div>
+                <div className="text-xs text-ink-2 font-medium mb-1.5">时间（精确到分钟，默认 09:00）</div>
                 <input
                   ref={firstFieldRef}
-                  type="date"
+                  type="datetime-local"
                   value={form.at}
                   onChange={set('at')}
                   className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
