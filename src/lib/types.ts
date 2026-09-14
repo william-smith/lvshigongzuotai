@@ -113,10 +113,11 @@ export function normalizeStage(stage?: string | null): StageNorm {
   return '在办'
 }
 
-/** 距今天数：负数表示已过期 */
+/** 距今天数：负数表示已过期。兼容 date（2026-09-14）和 timestamp（2026-09-14T09:00:00） */
 export function daysUntil(d?: string | null): number | null {
   if (!d) return null
-  const target = new Date(d + 'T00:00:00')
+  // 已带 T 的时间戳直接解析；纯日期补 T00:00:00（本地时区）
+  const target = new Date(d.includes('T') ? d : d + 'T00:00:00')
   if (isNaN(target.getTime())) return null
   const today = new Date()
   today.setHours(0, 0, 0, 0)
