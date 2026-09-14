@@ -305,9 +305,11 @@ function Shell() {
 function Gate() {
   const { ready, session } = useAuth()
   if (!ready) {
+    // 隔夜再打开时这里会停留 1~3 秒：正在用 refresh_token 静默续期，
+    // 续期成功就直接进主界面（不必重新登录）；失败才回登录页。
     return (
       <div className="h-screen flex items-center justify-center text-ink-3 text-sm bg-canvas">
-        正在检查登录状态…
+        正在恢复登录状态…
       </div>
     )
   }

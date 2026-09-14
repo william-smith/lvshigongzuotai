@@ -10,22 +10,20 @@
  * 删除时：contacts.intake_id 在 schema 里已声明 on delete cascade，
  *        关联联系人会被数据库自动清掉，无需手动级联。
  */
-import { getAccessToken, notifyExpired } from './auth'
+import { authedFetch } from './auth'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import type { IntakeRow } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
-const KEY = import.meta.env.VITE_API_KEY as string | undefined
-
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = (await getAccessToken()) ?? (KEY as string)
-  return {
-    apikey: KEY as string,
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation',
-  }
+/**
+ * 只声明「额外请求头」：apikey 与 Authorization 由 authedFetch 统一注入——
+ * 它在 401 时会用最新 token 自动重试一次，且只有当前这枚 token 确实失效才登出，
+ * 避免「上一枚过期 token 的迟到 401」把刚登录成功的新会话清掉。
+ */
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  Prefer: 'return=representation',
 }
 
 export interface IntakeDraft {
@@ -91,14 +89,8 @@ function buildRow(
 /** intakes 表主键是 bigint（非 bigserial），新建前先取 max(id)+1 */
 async function nextIntakeId(): Promise<number> {
   if (!BASE) throw new Error('API 未配置')
-  const res = await fetch(`${BASE}/intakes?select=id&order=id.desc&limit=1`, {
-    headers: {
-      apikey: KEY as string,
-      Authorization: `Bearer ${(await getAccessToken()) ?? KEY}`,
-    },
-  })
+  const res = await authedFetch(`${BASE}/intakes?select=id&order=id.desc&limit=1`)
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效')
   }
   if (!res.ok) throw new Error(`查询 id 失败：${res.status}`)
@@ -108,7 +100,6 @@ async function nextIntakeId(): Promise<number> {
 
 function assertOk(res: Response): void {
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效，请重新登录')
   }
 }
@@ -126,9 +117,9 @@ export async function saveIntake(
 
   if (isNew) {
     row.id = await nextIntakeId()
-    const res = await fetch(`${BASE}/intakes`, {
+    const res = await authedFetch(`${BASE}/intakes`, {
       method: 'POST',
-      headers: await authHeaders(),
+      headers: JSON_HEADERS,
       body: JSON.stringify({
         id: row.id,
         client: row.client,
@@ -150,9 +141,9 @@ export async function saveIntake(
     return { row: { ...arr[0], phones: existingPhones ?? [] }, isNew: true }
   }
 
-  const res = await fetch(`${BASE}/intakes?id=eq.${draft.id}`, {
+  const res = await authedFetch(`${BASE}/intakes?id=eq.${draft.id}`, {
     method: 'PATCH',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
     body: JSON.stringify({
       client: row.client,
       first_contact: row.first_contact,
@@ -175,9 +166,9 @@ export async function saveIntake(
 export async function deleteIntake(id: number): Promise<void> {
   if (!isCloud) return
   // contacts.intake_id 已 on delete cascade，关联联系人自动清理
-  const res = await fetch(`${BASE}/intakes?id=eq.${id}`, {
+  const res = await authedFetch(`${BASE}/intakes?id=eq.${id}`, {
     method: 'DELETE',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
   })
   assertOk(res)
   if (!res.ok) {

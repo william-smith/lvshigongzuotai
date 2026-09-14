@@ -7,22 +7,20 @@
  *
  * 保留策略：若用户没有改动「详细情况」，原密文原样保留，不会被覆盖成 null。
  */
-import { getAccessToken, notifyExpired } from './auth'
+import { authedFetch } from './auth'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import { normalizeStage, type CaseRow } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
-const KEY = import.meta.env.VITE_API_KEY as string | undefined
-
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = (await getAccessToken()) ?? (KEY as string)
-  return {
-    apikey: KEY as string,
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation',
-  }
+/**
+ * 只声明「额外请求头」：apikey 与 Authorization 由 authedFetch 统一注入——
+ * 它在 401 时会用最新 token 自动重试一次，且只有当前这枚 token 确实失效才登出，
+ * 避免「上一枚过期 token 的迟到 401」把刚登录成功的新会话清掉。
+ */
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  Prefer: 'return=representation',
 }
 
 export interface CaseDraft {
@@ -95,14 +93,8 @@ function buildRow(
 /** cases 表主键是 bigint（非 bigserial），新建前先取 max(id)+1 */
 async function nextCaseId(): Promise<number> {
   if (!BASE) throw new Error('API 未配置')
-  const res = await fetch(`${BASE}/cases?select=id&order=id.desc&limit=1`, {
-    headers: {
-      apikey: KEY as string,
-      Authorization: `Bearer ${(await getAccessToken()) ?? KEY}`,
-    },
-  })
+  const res = await authedFetch(`${BASE}/cases?select=id&order=id.desc&limit=1`)
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效')
   }
   if (!res.ok) throw new Error(`查询 id 失败：${res.status}`)
@@ -112,7 +104,6 @@ async function nextCaseId(): Promise<number> {
 
 function assertOk(res: Response): void {
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效，请重新登录')
   }
 }
@@ -126,9 +117,9 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
 
   if (isNew) {
     row.id = await nextCaseId()
-    const res = await fetch(`${BASE}/cases`, {
+    const res = await authedFetch(`${BASE}/cases`, {
       method: 'POST',
-      headers: await authHeaders(),
+      headers: JSON_HEADERS,
       body: JSON.stringify({ ...row, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
     })
     assertOk(res)
@@ -140,9 +131,9 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
     return { row: arr[0] ?? row, isNew: true }
   }
 
-  const res = await fetch(`${BASE}/cases?id=eq.${draft.id}`, {
+  const res = await authedFetch(`${BASE}/cases?id=eq.${draft.id}`, {
     method: 'PATCH',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
     body: JSON.stringify({
       client: row.client,
       cause: row.cause,
@@ -169,9 +160,9 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
 
 export async function deleteCase(id: number): Promise<void> {
   if (!isCloud) return
-  const res = await fetch(`${BASE}/cases?id=eq.${id}`, {
+  const res = await authedFetch(`${BASE}/cases?id=eq.${id}`, {
     method: 'DELETE',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
   })
   assertOk(res)
   if (!res.ok) {

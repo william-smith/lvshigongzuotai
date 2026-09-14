@@ -1,4 +1,4 @@
-import { getAccessToken, notifyExpired } from './auth'
+import { authedFetch } from './auth'
 import type { CaseRow, Dataset, ExpenseRow, IntakeRow, MaterialRow, TimelineRow } from './types'
 
 /**
@@ -31,12 +31,14 @@ interface Query {
 /** 供其他模块复用同一套鉴权（文书与证据等） */
 export const API_BASE = BASE
 
-/** 带上登录态；没登录时退回匿名 key（会被 RLS 挡住，用于自检报错） */
-export async function authHeaders(): Promise<Record<string, string>> {
-  const token = (await getAccessToken()) ?? (KEY as string)
-  return { apikey: KEY as string, Authorization: `Bearer ${token}`, Accept: 'application/json' }
-}
-
+/**
+ * 读表。
+ *
+ * 鉴权走 `authedFetch`：401/403 会先用最新 token 自动重试一次，只有**确实是当前这枚
+ * token 失效**才会登出。这样两件事都不会再发生：
+ *   - 上一枚过期 token 的迟到 401，把用户刚登录成功的新会话清掉（「登录后又被踢回」）；
+ *   - 网络抖动导致的瞬时 401 直接把整个会话登出。
+ */
 async function request<T>(table: string, q: Query = {}): Promise<T[]> {
   if (!BASE || !KEY) throw new Error('未配置 VITE_API_BASE / VITE_API_KEY')
   const url = new URL(`${BASE}/${table}`)
@@ -45,10 +47,9 @@ async function request<T>(table: string, q: Query = {}): Promise<T[]> {
   if (q.limit) url.searchParams.set('limit', String(q.limit))
   for (const [col, val] of q.eq ?? []) url.searchParams.set(col, `eq.${val}`)
 
-  const res = await fetch(url.toString(), { headers: await authHeaders() })
+  const res = await authedFetch(url.toString())
   if (res.status === 401 || res.status === 403) {
-    notifyExpired() // 登录态失效，回到登录页
-    throw new Error('登录已失效，请重新登录')
+    throw new Error('登录已失效，请重新登录') // authedFetch 内已按需触发登出
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
@@ -77,9 +78,23 @@ function normalizeDemo(raw: unknown): Dataset {
  * onProgress 会被调用 1~2 次：第一次是「仅案件」的中间态，第二次是完整数据。
  */
 export async function loadDataset(onProgress?: (d: Dataset) => void): Promise<Dataset> {
-  // 动态载入：让演示数据单独成块，不拖慢首屏
   if (!isCloud) {
-    const d = normalizeDemo((await import('../data/demo.json')).default)
+    // 本地演示模式（**可选**）：demo.json 不随仓库分发——它曾装过真实当事人数据，
+    // 严禁提交（详见 README「安全须知」）。
+    // 这里用「变量说明符 + @vite-ignore」，让 TS 与打包器都不去静态解析它：
+    // 文件缺失时不再阻断构建，只有真走到这条分支才给出明确指引。
+    const demoPath = '../data/demo.json'
+    let raw: unknown
+    try {
+      const mod = (await import(/* @vite-ignore */ demoPath)) as { default?: unknown }
+      raw = mod.default ?? mod
+    } catch {
+      throw new Error(
+        '未接入云端数据库：请在 .env 配置 VITE_API_BASE 与 VITE_API_KEY；' +
+          '若要跑本地演示模式，需自备 src/data/demo.json（该文件不随仓库分发）。',
+      )
+    }
+    const d = normalizeDemo(raw)
     onProgress?.(d)
     return d
   }
@@ -154,14 +169,13 @@ export async function loadDataset(onProgress?: (d: Dataset) => void): Promise<Da
 /** 写入一条加密联系方式（演示模式下为空操作） */
 export async function saveContact(intakeId: number, enc: string, mask: string) {
   if (!isCloud || !BASE || !KEY) return
-  const res = await fetch(`${BASE}/contacts`, {
+  const res = await authedFetch(`${BASE}/contacts`, {
     method: 'POST',
-    headers: { ...(await authHeaders()), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
     body: JSON.stringify({ intake_id: intakeId, phone_enc: enc, phone_mask: mask }),
   })
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
-    throw new Error('登录已失效，请重新登录')
+    throw new Error('登录已失效，请重新登录') // authedFetch 内已按需触发登出
   }
   if (!res.ok) throw new Error(`保存失败：${res.status}`)
 }

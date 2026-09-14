@@ -1,6 +1,6 @@
-import { API_BASE, authHeaders, isCloud } from './data'
+import { API_BASE, isCloud } from './data'
 import { decryptString, encryptString, verifyKey, VERIFIER_PLAIN } from './crypto'
-import { notifyExpired } from './auth'
+import { authedFetch } from './auth'
 
 export interface ReEncProgress {
   done: number
@@ -27,10 +27,9 @@ async function fetchAll(select: string, table: string): Promise<Row[]> {
   if (!API_BASE) throw new Error('未接云端')
   const url = new URL(`${API_BASE}/${table}`)
   url.searchParams.set('select', select)
-  const res = await fetch(url.toString(), { headers: await authHeaders() })
+  const res = await authedFetch(url.toString())
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
-    throw new Error('登录已失效，请重新登录')
+    throw new Error('登录已失效，请重新登录') // 重试与登出已由 authedFetch 处理
   }
   if (!res.ok) throw new Error(`读取 ${table} 失败：${res.status}`)
   return (await res.json()) as Row[]
@@ -38,14 +37,13 @@ async function fetchAll(select: string, table: string): Promise<Row[]> {
 
 async function patchRow(table: string, id: number, patch: Record<string, unknown>): Promise<void> {
   if (!API_BASE) return
-  const res = await fetch(`${API_BASE}/${table}?id=eq.${id}`, {
+  const res = await authedFetch(`${API_BASE}/${table}?id=eq.${id}`, {
     method: 'PATCH',
-    headers: { ...(await authHeaders()), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
     body: JSON.stringify(patch),
   })
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
-    throw new Error('登录已失效，请重新登录')
+    throw new Error('登录已失效，请重新登录') // 重试与登出已由 authedFetch 处理
   }
   if (!res.ok)
     throw new Error(`更新 ${table} ${id} 失败：${res.status}：${(await res.text().catch(() => '')).slice(0, 120)}`)

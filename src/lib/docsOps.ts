@@ -1,5 +1,5 @@
-import { API_BASE, authHeaders, isCloud } from './data'
-import { notifyExpired } from './auth'
+import { API_BASE, isCloud } from './data'
+import { authedFetch } from './auth'
 import { classifyByFilename } from './docCategory'
 import type { CaseFolder, DocFile } from './types'
 import type { LocalFile } from './fsAccess'
@@ -18,18 +18,19 @@ import type { LocalFile } from './fsAccess'
 async function call(path: string, init: RequestInit & { json?: unknown } = {}) {
   if (!isCloud || !API_BASE) throw new Error('未接云端，索引不会保存')
   const { json, ...rest } = init
-  const res = await fetch(`${API_BASE}/${path}`, {
+  // authedFetch 负责注入 apikey/Authorization，并在 401 时用最新 token 重试一次；
+  // 只有当前这枚 token 确实失效才会登出（避免迟到 401 清掉新会话）。
+  const res = await authedFetch(`${API_BASE}/${path}`, {
     ...rest,
     headers: {
-      ...(await authHeaders()),
+      Accept: 'application/json',
       'Content-Type': 'application/json',
       ...(rest.headers ?? {}),
     },
     body: json === undefined ? rest.body : JSON.stringify(json),
   })
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
-    throw new Error('登录已失效，请重新登录')
+    throw new Error('登录已失效，请重新登录') // 重试与登出已由 authedFetch 处理
   }
   if (!res.ok) throw new Error(`请求失败 ${res.status}：${(await res.text().catch(() => '')).slice(0, 120)}`)
   return res

@@ -9,22 +9,20 @@
  *
  * 删除时：timeline 表已声明 on delete cascade（随案件），但删除单条是显式 DELETE。
  */
-import { getAccessToken, notifyExpired } from './auth'
+import { authedFetch } from './auth'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import type { TimelineRow } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
-const KEY = import.meta.env.VITE_API_KEY as string | undefined
-
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = (await getAccessToken()) ?? (KEY as string)
-  return {
-    apikey: KEY as string,
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation',
-  }
+/**
+ * 只声明「额外请求头」：apikey 与 Authorization 由 authedFetch 统一注入——
+ * 它在 401 时会用最新 token 自动重试一次，且只有当前这枚 token 确实失效才登出，
+ * 避免「上一枚过期 token 的迟到 401」把刚登录成功的新会话清掉。
+ */
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  Prefer: 'return=representation',
 }
 
 export interface TimelineDraft {
@@ -84,14 +82,8 @@ function buildRow(
 /** timeline 表主键是 bigint（非 bigserial），新建前先取 max(id)+1 */
 async function nextTimelineId(): Promise<number> {
   if (!BASE) throw new Error('API 未配置')
-  const res = await fetch(`${BASE}/timeline?select=id&order=id.desc&limit=1`, {
-    headers: {
-      apikey: KEY as string,
-      Authorization: `Bearer ${(await getAccessToken()) ?? KEY}`,
-    },
-  })
+  const res = await authedFetch(`${BASE}/timeline?select=id&order=id.desc&limit=1`)
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效')
   }
   if (!res.ok) throw new Error(`查询 id 失败：${res.status}`)
@@ -101,7 +93,6 @@ async function nextTimelineId(): Promise<number> {
 
 function assertOk(res: Response): void {
   if (res.status === 401 || res.status === 403) {
-    notifyExpired()
     throw new Error('登录已失效，请重新登录')
   }
 }
@@ -115,9 +106,9 @@ export async function saveTimeline(draft: TimelineDraft, key: CryptoKey | null):
 
   if (isNew) {
     row.id = await nextTimelineId()
-    const res = await fetch(`${BASE}/timeline`, {
+    const res = await authedFetch(`${BASE}/timeline`, {
       method: 'POST',
-      headers: await authHeaders(),
+      headers: JSON_HEADERS,
       body: JSON.stringify({
         id: row.id,
         case_id: row.case_id,
@@ -136,9 +127,9 @@ export async function saveTimeline(draft: TimelineDraft, key: CryptoKey | null):
     return { row: arr[0] ?? row, isNew: true }
   }
 
-  const res = await fetch(`${BASE}/timeline?id=eq.${draft.id}`, {
+  const res = await authedFetch(`${BASE}/timeline?id=eq.${draft.id}`, {
     method: 'PATCH',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
     body: JSON.stringify({
       case_id: row.case_id,
       at: row.at,
@@ -157,9 +148,9 @@ export async function saveTimeline(draft: TimelineDraft, key: CryptoKey | null):
 
 export async function deleteTimeline(id: number): Promise<void> {
   if (!isCloud) return
-  const res = await fetch(`${BASE}/timeline?id=eq.${id}`, {
+  const res = await authedFetch(`${BASE}/timeline?id=eq.${id}`, {
     method: 'DELETE',
-    headers: await authHeaders(),
+    headers: JSON_HEADERS,
   })
   assertOk(res)
   if (!res.ok) {
