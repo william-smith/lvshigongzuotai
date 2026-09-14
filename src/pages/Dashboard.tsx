@@ -1,6 +1,6 @@
 import { Icon } from '../components/Icon'
 import { authEnabled, useAuth } from '../lib/auth'
-import { daysUntil, fmtDate, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
+import { daysUntil, fmtDateTime, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
 
 export function Dashboard({
   data,
@@ -120,7 +120,7 @@ export function Dashboard({
                 </div>
                 <div className="flex items-center gap-1.5 mt-2.5 text-xs text-ink-3">
                   <Icon name="clock" className="w-3.5 h-3.5" />
-                  {fmtDate(c.next_due)} · {c.next_action || '待办'}
+                  {fmtDateTime(c.next_due)} · {c.next_action || '待办'}
                 </div>
               </button>
             ))}

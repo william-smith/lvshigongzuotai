@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { SortMenu, SortableTh, nextSort, type SortDir, type SortOption } from '../components/SortMenu'
 import { useViewPref } from '../lib/viewPrefs'
-import { daysUntil, fmtDate, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
+import { daysUntil, fmtDateTime, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
 
 type Filter = 'all' | 'active' | 'due' | 'closed'
 type SortKey = 'default' | 'client' | 'cause' | 'stage' | 'due'
@@ -298,7 +298,7 @@ export function CaseList({
                 <td className="px-3 py-3 text-ink-2 truncate max-w-[220px]">
                   {isTerminal(c) ? '—' : c.next_action || '—'}
                 </td>
-                <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(c.next_due)}</td>
+                <td className="px-3 py-3 text-ink-2 text-xs">{fmtDateTime(c.next_due)}</td>
                 <td className="px-3 py-3">
                   <DueTag due={isTerminal(c) ? null : c.next_due} />
                 </td>

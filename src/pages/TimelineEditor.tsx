@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon'
 import { useVault } from '../store/vault'
 import { deleteTimeline, saveTimeline, type TimelineDraft } from '../lib/timelineOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
-import type { TimelineRow } from '../lib/types'
+import { defaultAt, toDateTimeLocal, type TimelineRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
 
@@ -20,23 +20,6 @@ interface Props {
 interface FormState {
   at: string
   content: string
-}
-
-/** 新建节点默认时间：今天 09:00（取本地时区，datetime-local 直接吃这个值） */
-function defaultAt(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T09:00`
-}
-
-/** 把任意 at 字符串规整成 datetime-local 接受的 `YYYY-MM-DDTHH:MM`：
- *  - 旧数据只有日期（如 2026-03-11）→ 补足 09:00
- *  - 带秒/时区（如 2026-03-11T09:00:00.000Z）→ 只截到分钟 */
-function toDateTimeLocal(s: string | null | undefined): string {
-  if (!s) return ''
-  const [datePart, timePart = ''] = s.split('T')
-  const time = timePart ? timePart.slice(0, 5) : '09:00'
-  return `${datePart}T${time}`
 }
 
 const emptyForm: FormState = { at: defaultAt(), content: '' }

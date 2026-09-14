@@ -140,7 +140,7 @@ export function CaseDetail({
               <span
                 className={`text-2xs ${d !== null && d < 0 ? 'text-danger' : d !== null && d <= 3 ? 'text-danger' : d !== null && d <= 7 ? 'text-warn' : 'text-ink-3'}`}
               >
-                {fmtDate(c.next_due)}
+                {fmtDateTime(c.next_due)}
                 {d !== null && (d < 0 ? ` · 逾期${-d}天` : ` · 还有${d}天`)}
               </span>
             </InfoItem>

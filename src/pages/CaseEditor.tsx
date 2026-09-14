@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon'
 import { useVault } from '../store/vault'
 import { deleteCase, saveCase, type CaseDraft } from '../lib/caseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
-import type { CaseRow } from '../lib/types'
+import { defaultAt, toDateTimeLocal, type CaseRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
 
@@ -33,7 +33,7 @@ const emptyForm: FormState = {
   cause: '',
   stage: '一审',
   next_action: '',
-  next_due: '',
+  next_due: defaultAt(),
   first_contact: '',
   signed_at: '',
   detail: '',
@@ -46,7 +46,7 @@ function toForm(c: CaseRow | null): FormState {
     cause: c.cause ?? '',
     stage: c.stage ?? '一审',
     next_action: c.next_action ?? '',
-    next_due: c.next_due ?? '',
+    next_due: toDateTimeLocal(c.next_due),
     first_contact: c.first_contact ?? '',
     signed_at: c.signed_at ?? '',
     // 先放脱敏文本；解锁后会用密文解出的原文替换
@@ -296,9 +296,9 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
                     className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
                   />
                 </Field>
-                <Field label="节点日期">
+                <Field label="节点时间（精确到分钟，默认 09:00）">
                   <input
-                    type="date"
+                    type="datetime-local"
                     value={form.next_due}
                     onChange={set('next_due')}
                     className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"

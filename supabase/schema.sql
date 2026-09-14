@@ -14,7 +14,7 @@ create table if not exists public.cases (
   stage          text,                   -- 阶段：一审/仲裁/结案…
   stage_norm     text,                   -- 归一化阶段：在办/结案/解除委托
   next_action    text,                   -- 下一步工作
-  next_due       date,                   -- 下一步日期（临期计算依据）
+  next_due       timestamp,              -- 下一步日期时间（精确到分钟，临期计算依据）
   first_contact  date,
   signed_at      date,
   detail_mask    text,                   -- 脱敏后的详细情况（可明文检索展示）
