@@ -10,6 +10,7 @@ import { useVault } from './store/vault'
 import { CaseDetail } from './pages/CaseDetail'
 import { CaseEditor } from './pages/CaseEditor'
 import { CaseList } from './pages/CaseList'
+import { ExpenseTable } from './pages/ExpenseTable'
 import { Dashboard } from './pages/Dashboard'
 import { IntakesList } from './pages/IntakesList'
 import { IntakeEditor } from './pages/IntakeEditor'
@@ -256,6 +257,8 @@ function Shell() {
           <Dashboard data={data} stats={stats} onOpenCase={setCaseId} onViewCases={() => goto('cases')} />
         ) : view === 'cases' ? (
           <CaseList data={data} stats={stats} onOpenCase={setCaseId} onCreateCase={() => setEditing(null)} />
+        ) : view === 'expenses' ? (
+          <ExpenseTable data={data} onOpenCase={setCaseId} />
         ) : view === 'intakes' ? (
           <IntakesList
             data={data}

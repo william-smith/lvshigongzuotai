@@ -23,6 +23,7 @@ export type IconName =
   | 'eye-off'
   | 'shield'
   | 'logout'
+  | 'money'
 
 const paths: Record<IconName, string> = {
   home: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
@@ -50,6 +51,8 @@ const paths: Record<IconName, string> = {
   'eye-off': 'M3 3l18 18M10.6 5.8A10.4 10.4 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a17.6 17.6 0 0 1-3.3 4M6.4 7.7A17.4 17.4 0 0 0 2 12s3.6 6.5 10 6.5c1.2 0 2.3-.2 3.3-.5M9.9 9.9a3 3 0 0 0 4.2 4.2',
   shield: 'M12 3l8 3v6c0 4.5-3.2 7.6-8 9-4.8-1.4-8-4.5-8-9V6zM9 12l2 2 4-4',
   logout: 'M15 17l5-5-5-5M20 12H9M12 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h6',
+  money:
+    'M3 8h18a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM9 11.5l3 3 3-3M12 14.5V11M9.5 13h5',
 }
 
 export function Icon({
