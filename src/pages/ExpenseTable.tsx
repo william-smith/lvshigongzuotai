@@ -175,30 +175,16 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
   const totals = useMemo(() => {
     let income = 0
     let expense = 0
-    let personalIncome = 0
-    let personalExpense = 0
-    let personalAll = 0
+    let personal = 0
     for (const x of filtered) {
       if (x.amount != null) {
         if (x.dir === '收入') income += x.amount
         else if (x.dir === '支出') expense += x.amount
       }
-      if (x.personal != null) {
-        personalAll += x.personal
-        if (x.dir === '收入') personalIncome += x.personal
-        else if (x.dir === '支出') personalExpense += x.personal
-      }
+      if (x.personal != null) personal += x.personal
     }
-    return {
-      count: filtered.length,
-      income,
-      expense,
-      net: income - expense,
-      personal: personalAll,
-      personalIncome,
-      personalExpense,
-      personalNet: personalIncome - personalExpense,
-    }
+    // 净额口径：个人得合计 − 支出合计
+    return { count: filtered.length, income, expense, personal, net: personal - expense }
   }, [filtered])
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE))
@@ -252,63 +238,31 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
 
       <div className="p-4 md:p-6 space-y-4">
         {/* 汇总卡 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">筛选后记录</div>
-            <div className="text-2xl font-semibold mt-1 tabular-nums">{totals.count}</div>
+            <div className="text-xl font-semibold mt-1 tabular-nums">{totals.count}</div>
             <div className="text-2xs text-ink-3 mt-0.5">共 {data.expenses.length} 条</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总收入</div>
-            <div className="text-2xl font-semibold mt-1 tabular-nums text-ok">{fmtMoney(totals.income)}</div>
+            <div className="text-xl font-semibold mt-1 tabular-nums text-ok">{fmtMoney(totals.income)}</div>
             <div className="text-2xs text-ink-3 mt-0.5">收入类合计</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
+            <div className="text-xs text-ink-2">总个人得</div>
+            <div className="text-xl font-semibold mt-1 tabular-nums text-brand">{fmtMoney(totals.personal)}</div>
+            <div className="text-2xs text-ink-3 mt-0.5">个人得金额合计</div>
+          </div>
+          <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总支出</div>
-            <div className="text-2xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.expense)}</div>
+            <div className="text-xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.expense)}</div>
             <div className="text-2xs text-ink-3 mt-0.5">支出类合计</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">净额</div>
-            <div className="text-2xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.net)}</div>
-            <div className="text-2xs text-ink-3 mt-0.5">收入 − 支出</div>
-          </div>
-        </div>
-
-        {/* 个人得汇总条 */}
-        <div className="bg-brand-soft border border-brand/25 rounded-xl px-4 py-3 shadow-card">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-            <div>
-              <div className="text-xs text-brand/80">个人得合计</div>
-              <div className="text-2xl font-semibold mt-0.5 tabular-nums text-brand">
-                {fmtMoney(totals.personal)}
-              </div>
-              <div className="text-2xs text-brand/70 mt-0.5">筛选后 {totals.count} 条记录</div>
-            </div>
-            <div className="hidden sm:block w-px self-stretch bg-brand/20" />
-            <div>
-              <div className="text-xs text-brand/80">收入项个人得</div>
-              <div className="text-lg font-semibold mt-0.5 tabular-nums text-brand">
-                {fmtMoney(totals.personalIncome)}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-brand/80">支出项个人得</div>
-              <div className="text-lg font-semibold mt-0.5 tabular-nums text-brand">
-                {fmtMoney(totals.personalExpense)}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-brand/80">净个人得</div>
-              <div className="text-lg font-semibold mt-0.5 tabular-nums text-brand">
-                {fmtMoney(totals.personalNet)}
-              </div>
-              <div className="text-2xs text-brand/70 mt-0.5">收入项 − 支出项</div>
-            </div>
-            <div className="flex-1" />
-            <div className="text-2xs text-brand/70 max-w-[220px] leading-relaxed">
-              个人得金额为每条记录的「个人得」字段合计，随筛选条件实时重算。
-            </div>
+            <div className="text-xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.net)}</div>
+            <div className="text-2xs text-ink-3 mt-0.5">个人得 − 支出</div>
           </div>
         </div>
 
@@ -466,24 +420,6 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                 </tr>
               )}
             </tbody>
-            {pageRows.length > 0 && (
-              <tfoot>
-                <tr className="bg-canvas border-t border-line">
-                  <td className="px-4 py-2.5 text-xs text-ink-2" colSpan={3}>
-                    筛选后合计（{sorted.length} 条）
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-2xs text-ink-2 tabular-nums leading-relaxed">
-                    <div>收 {fmtMoney(totals.income)}</div>
-                    <div>支 {fmtMoney(totals.expense)}</div>
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-brand">
-                    {fmtMoney(totals.personal)}
-                  </td>
-                  <td className="px-3 py-2.5 text-2xs text-ink-3">净额 {fmtMoney(totals.net)}</td>
-                  <td />
-                </tr>
-              </tfoot>
-            )}
           </table>
           <div className="flex items-center gap-3 px-4 py-3 border-t border-line text-xs text-ink-2">
             <span>
