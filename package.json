@@ -12,6 +12,7 @@
     "sync:site": "node scripts/sync-site.mjs"
   },
   "dependencies": {
+    "lawyer-workbench": "file:",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

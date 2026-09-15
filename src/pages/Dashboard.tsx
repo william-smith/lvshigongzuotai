@@ -74,7 +74,9 @@ export function Dashboard({
                     <span className="w-1.5 h-1.5 rounded-full bg-danger shrink-0" />
                     <span className="text-sm font-medium">{c.client}</span>
                     <span className="text-xs text-ink-2 truncate flex-1">{c.next_action || '待办'}</span>
-                    <span className="text-xs text-danger shrink-0">{d === 0 ? '今天' : `${d} 天`}</span>
+                    <span className="text-xs text-danger shrink-0 font-semibold">
+                      {d === null ? '—' : d === 0 ? '今天' : d < 0 ? `逾期 ${-d} 天` : `${d} 天`}
+                    </span>
                   </button>
                 )
               })}

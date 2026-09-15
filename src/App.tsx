@@ -51,9 +51,10 @@ function Shell() {
     const cases = data?.cases ?? []
     const active = cases.filter((c) => (c.stage_norm || normalizeStage(c.stage)) === '在办')
     // 临期 / 本月节点只看在办案件：已结案、解除委托的案件挂着的是过期节点，不该再提醒
+    // 含「已逾期」（d < 0）与「未来 7 天内到期」两类；逾期越久越靠前
     const dueSoon = active.filter((c) => {
       const d = daysUntil(c.next_due)
-      return d !== null && d >= 0 && d <= 7
+      return d !== null && d <= 7
     })
     const closed = cases.filter((c) => ['结案', '解除委托'].includes(c.stage_norm || normalizeStage(c.stage)))
     const thisMonth = active.filter((c) => {

@@ -120,7 +120,7 @@ export function CaseList({
   const cards = [
     { label: '在办案件', value: stats.active, hint: `共 ${stats.total} 件` },
     { label: '本月节点', value: stats.thisMonth, hint: '开庭 / 提交 / 答复' },
-    { label: '临期事项', value: stats.dueSoon.length, hint: '7 天内到期' },
+    { label: '临期事项', value: stats.dueSoon.length, hint: '已逾期 / 7 天内到期' },
     { label: '已结案', value: stats.closed, hint: '可归档' },
   ]
 
