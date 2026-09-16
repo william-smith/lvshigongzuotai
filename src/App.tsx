@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BottomTabs, MobileBar, Sidebar, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
+import { VaultSetupGuide } from './components/VaultSetupGuide'
 import { Icon } from './components/Icon'
 import { AuthProvider, authEnabled, useAuth } from './lib/auth'
 import { loadDataset } from './lib/data'
@@ -186,6 +187,7 @@ function Shell() {
       />
 
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <VaultSetupGuide />
         {caseId && current ? (
           <>
             <MobileBar

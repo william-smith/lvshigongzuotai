@@ -1,5 +1,14 @@
 import { API_BASE, isCloud } from './data'
-import { decryptString, encryptString, verifyKey, VERIFIER_PLAIN } from './crypto'
+import {
+  CRYPTO_ITERATIONS,
+  CRYPTO_SALT,
+  decryptString,
+  deriveKey,
+  encryptString,
+  persistKey,
+  verifyKey,
+  VERIFIER_PLAIN,
+} from './crypto'
 import { authedFetch } from './auth'
 
 export interface ReEncProgress {
@@ -159,4 +168,42 @@ export async function reencryptVault(
   await runLimited(tasks, 8)
 
   return { reencrypted, failed, newVerifier, total }
+}
+
+/**
+ * 首次设置保险箱口令：本机派生密钥 → 生成校验串 → 写入云端 vault_meta（upsert id=1）。
+ * 与 reencryptVault 写 verifier 用的是同一张表同一行，区别是这里不需要旧口令，
+ * 用于「换台全新设备、且从未设过保险箱口令」时把保险箱初始化出来。
+ *
+ * 注意：verifier 为空意味着 vault_meta 要么没建、要么没初始化过，此时云端不应有
+ * 任何用旧口令加密的密文；所以直接 upsert 覆盖是安全的。若确实有历史密文但 verifier
+ * 意外为空（数据损坏），这步会生成新口令导致旧密文解不开——属极端异常，前端不拦截。
+ */
+export async function setupVault(
+  passphrase: string,
+  remember: boolean,
+): Promise<{ ok: boolean; verifier?: string; error?: string }> {
+  if (!isCloud || !API_BASE) {
+    return { ok: false, error: '本地演示数据无需设置保险箱口令' }
+  }
+  try {
+    const key = await deriveKey(passphrase)
+    const verifier = await encryptString(key, VERIFIER_PLAIN)
+    const res = await authedFetch(`${API_BASE}/vault_meta?on_conflict=id`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: 1, verifier_enc: verifier, iterations: CRYPTO_ITERATIONS, salt: CRYPTO_SALT }),
+    })
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: '登录已失效，请重新登录' }
+    }
+    if (!res.ok) {
+      return { ok: false, error: `初始化保险箱失败：${res.status}` }
+    }
+    // 密钥落本机，随后 VaultProvider 用 restoreKey 把它读回内存
+    await persistKey(key, remember)
+    return { ok: true, verifier }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || '设置失败' }
+  }
 }
