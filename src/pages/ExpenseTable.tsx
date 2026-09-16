@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { SortMenu, SortableTh, nextSort, type SortDir, type SortOption } from '../components/SortMenu'
+import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
 import { useViewPref } from '../lib/viewPrefs'
-import { fmtDate, fmtMoney, type Dataset, type ExpenseRow } from '../lib/types'
+import { fmtDate, type Dataset, type ExpenseRow } from '../lib/types'
 
 type DirectionFilter = 'all' | '收入' | '支出'
 type ExSortKey = 'at' | 'direction' | 'category' | 'amount' | 'personal' | 'client'
@@ -116,6 +117,7 @@ function DirectionTag({ dir }: { dir: '收入' | '支出' | '' }) {
 export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: (id: number) => void }) {
   const { view, patch, reset, isDefault } = useViewPref<ExpenseView>('expenses', DEFAULTS)
   const [page, setPage] = useState(1)
+  const { visible: amtVisible, toggle: toggleAmt } = useAmountVisible()
 
   const categories = useMemo(() => {
     const s = new Set<string>()
@@ -234,6 +236,14 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
             className="w-full h-9 pl-9 pr-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
           />
         </div>
+        <button
+          onClick={toggleAmt}
+          title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
+          className="h-9 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1.5 shrink-0"
+        >
+          <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-4 h-4" />
+          <span className="text-xs">{amtVisible ? '隐藏金额' : '显示金额'}</span>
+        </button>
       </div>
 
       <div className="p-4 md:p-6 space-y-4">
@@ -246,37 +256,46 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总收入</div>
-            <div className="text-xl font-semibold mt-1 tabular-nums text-ok">{fmtMoney(totals.income)}</div>
+            <SecretMoney value={totals.income} className="text-xl font-semibold mt-1 tabular-nums text-ok" />
             <div className="text-2xs text-ink-3 mt-0.5">收入类合计</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总个人得</div>
-            <div className="text-xl font-semibold mt-1 tabular-nums text-brand">{fmtMoney(totals.personal)}</div>
+            <SecretMoney value={totals.personal} className="text-xl font-semibold mt-1 tabular-nums text-brand" />
             <div className="text-2xs text-ink-3 mt-0.5">个人得金额合计</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总支出</div>
-            <div className="text-xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.expense)}</div>
+            <SecretMoney value={totals.expense} className="text-xl font-semibold mt-1 tabular-nums" />
             <div className="text-2xs text-ink-3 mt-0.5">支出类合计</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">净额</div>
-            <div className="text-xl font-semibold mt-1 tabular-nums">{fmtMoney(totals.net)}</div>
+            <SecretMoney value={totals.net} className="text-xl font-semibold mt-1 tabular-nums" />
             <div className="text-2xs text-ink-3 mt-0.5">个人得 − 支出</div>
           </div>
         </div>
 
         {/* 筛选条（响应式：自动换行） */}
         <div className="bg-white rounded-xl border border-line p-3 md:p-4 shadow-card">
-          {/* 移动端搜索 */}
-          <div className="relative md:hidden mb-3">
-            <Icon name="search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
-            <input
-              value={view.keyword}
-              onChange={(e) => setField({ keyword: e.target.value })}
-              placeholder="搜索类别 / 备注 / 案件"
-              className="w-full h-9 pl-9 pr-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
-            />
+          {/* 移动端搜索 + 眼睛按钮 */}
+          <div className="md:hidden flex items-center gap-2 mb-3">
+            <div className="relative flex-1">
+              <Icon name="search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
+              <input
+                value={view.keyword}
+                onChange={(e) => setField({ keyword: e.target.value })}
+                placeholder="搜索类别 / 备注 / 案件"
+                className="w-full h-9 pl-9 pr-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+              />
+            </div>
+            <button
+              onClick={toggleAmt}
+              title={amtVisible ? '隐藏金额' : '显示金额'}
+              className="h-9 w-9 shrink-0 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center justify-center"
+            >
+              <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-4 h-4" />
+            </button>
           </div>
           <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
             {/* 收支 */}
@@ -405,8 +424,12 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                       <DirectionTag dir={x.dir} />
                     </td>
                     <td className="px-3 py-3">{x.category || '—'}</td>
-                    <td className="px-3 py-3 text-right tabular-nums font-medium">{fmtMoney(x.amount)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-ink-2">{fmtMoney(x.personal)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums font-medium">
+                      <SecretMoney value={x.amount} />
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-ink-2">
+                      <SecretMoney value={x.personal} />
+                    </td>
                     <td className="px-3 py-3 text-ink-2 truncate max-w-[260px]">{x.detail || '—'}</td>
                     <td className="px-3 py-3 text-ink-2 truncate max-w-[140px]">{x.client}</td>
                   </tr>
@@ -450,15 +473,19 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   <span className="text-xs text-ink-3">{fmtDate(x.at)}</span>
                   <DirectionTag dir={x.dir} />
                   <span className="text-xs text-ink-2 truncate flex-1">{x.category || '—'}</span>
-                  <span className={`text-sm font-semibold tabular-nums ${x.dir === '收入' ? 'text-ok' : 'text-ink'}`}>
-                    {fmtMoney(x.amount)}
-                  </span>
+                  <SecretMoney
+                    value={x.amount}
+                    interactive={false}
+                    className={`text-sm font-semibold tabular-nums ${x.dir === '收入' ? 'text-ok' : 'text-ink'}`}
+                  />
                 </div>
                 <div className="text-xs text-ink-2 mt-1.5 truncate">{x.detail || '—'}</div>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-2xs text-ink-3 truncate flex-1">案件：{x.client}</span>
                   {x.personal != null && (
-                    <span className="text-2xs text-brand shrink-0">个人得 {fmtMoney(x.personal)}</span>
+                    <span className="text-2xs text-brand shrink-0">
+                      个人得 <SecretMoney value={x.personal} interactive={false} />
+                    </span>
                   )}
                 </div>
               </button>

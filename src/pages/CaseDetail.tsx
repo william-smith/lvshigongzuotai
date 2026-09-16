@@ -1,8 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
+import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
 import { MaterialsView } from './MaterialsView'
-import { daysUntil, fmtDate, fmtDateTime, fmtMoney, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
+import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
 
 type Tab = 'overview' | 'timeline' | 'expense' | 'material'
 
@@ -70,6 +71,7 @@ export function CaseDetail({
   onDeleteExpense: (id: number) => void
 }) {
   const [tab, setTab] = useState<Tab>('overview')
+  const { visible: amtVisible, toggle: toggleAmt } = useAmountVisible()
 
   const timeline = useMemo(
     () => data.timeline.filter((t) => t.case_id === c.id).sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '')),
@@ -239,14 +241,24 @@ export function CaseDetail({
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-2xs text-ink-3">共 {expenses.length} 条记录</span>
-                  <button
-                    type="button"
-                    onClick={onCreateExpense}
-                    className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
-                  >
-                    <Icon name="plus" className="w-3.5 h-3.5" />
-                    新增
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={toggleAmt}
+                      title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
+                      className="h-8 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1 text-xs"
+                    >
+                      <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-3.5 h-3.5" />
+                      {amtVisible ? '隐藏金额' : '显示金额'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCreateExpense}
+                      className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
+                    >
+                      <Icon name="plus" className="w-3.5 h-3.5" />
+                      新增
+                    </button>
+                  </div>
                 </div>
                 {expenses.length === 0 ? (
                   <Empty text="暂无费用记录，点「新增」登记收支" />
@@ -278,11 +290,15 @@ export function CaseDetail({
                               </span>
                             </td>
                             <td className="py-2.5 pr-3 text-ink-2">{e.category || '—'}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">{fmtMoney(e.amount)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums">
+                              <SecretMoney value={e.amount} />
+                            </td>
                             <td className="py-2.5 px-3 text-ink-2">
                               <SecretText mask={e.detail} enc={e.detail_enc} />
                             </td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">{fmtMoney(e.personal)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums">
+                              <SecretMoney value={e.personal} />
+                            </td>
                             <td className="py-2.5 pl-3 text-right">
                               <RowActions onEdit={() => onEditExpense(e)} onDelete={() => onDeleteExpense(e.id)} />
                             </td>

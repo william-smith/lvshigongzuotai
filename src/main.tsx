@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { VaultProvider } from './store/vault'
+import { AmountPrivacyProvider } from './components/SecretMoney'
 import { API_BASE } from './lib/data'
 import './index.css'
 
@@ -31,7 +32,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator && location.protocol ==
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <VaultProvider>
-      <App />
+      <AmountPrivacyProvider>
+        <App />
+      </AmountPrivacyProvider>
     </VaultProvider>
   </React.StrictMode>,
 )
