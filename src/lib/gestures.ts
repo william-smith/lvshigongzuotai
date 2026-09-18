@@ -72,6 +72,89 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
   return ref
 }
 
+/**
+ * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
+ *
+ * 分层规则（避免两个手势互相打架）：
+ * - 起点在屏幕左边缘 EDGE 像素内 → 只有「返回」响应（iOS 式 edge swipe）
+ * - 其余区域 → 只有「翻上一个/下一个 tab」响应（左滑=下一个，右滑=上一个）
+ * 两边互斥，一次手势不会同时触发两件事。
+ */
+export function useSwipeNavigation<T extends HTMLElement>({
+  onBack,
+  onPrevTab,
+  onNextTab,
+  edgeWidth = 48,
+}: {
+  onBack: () => void
+  onPrevTab?: () => void
+  onNextTab?: () => void
+  edgeWidth?: number
+}) {
+  const ref = useRef<T | null>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    let x0 = 0
+    let y0 = 0
+    let t0 = 0
+    let edge = false
+    let tracking = false
+
+    const onStart = (e: TouchEvent) => {
+      tracking = false
+      if (e.touches.length !== 1) return
+      const node = e.target as HTMLElement | null
+      if (!node || inside(node.tagName)) return
+      let p: HTMLElement | null = node
+      while (p && p !== el) {
+        if (p.scrollWidth - p.clientWidth > 8) return
+        p = p.parentElement
+      }
+      tracking = true
+      x0 = e.touches[0].clientX
+      y0 = e.touches[0].clientY
+      t0 = Date.now()
+      edge = x0 <= edgeWidth
+    }
+
+    const onEnd = (e: TouchEvent) => {
+      if (!tracking) return
+      tracking = false
+      const t = e.changedTouches[0]
+      if (!t) return
+      const dx = t.clientX - x0
+      const dy = t.clientY - y0
+      const ax = Math.abs(dx)
+      const ay = Math.abs(dy)
+      const fast = Date.now() - t0 < 800
+      if (edge) {
+        if (ax >= 56 && ax > ay * 1.6 && fast) onBack()
+        return
+      }
+      if (ax >= 72 && ax > ay * 1.8 && fast) {
+        if (dx < 0) onNextTab?.()
+        else onPrevTab?.()
+      }
+    }
+
+    const onCancel = () => (tracking = false)
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    el.addEventListener('touchcancel', onCancel, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onCancel)
+    }
+  }, [onBack, onPrevTab, onNextTab, edgeWidth])
+
+  return ref
+}
+
 /** 向下滑动 → 关闭浮层/查看器（图片预览、底部弹层等） */
 export function useSwipeDown<T extends HTMLElement>(onClose: () => void, enabled = true) {
   const ref = useRef<T | null>(null)

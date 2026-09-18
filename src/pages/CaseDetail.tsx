@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
-import { useSwipeBack } from '../lib/gestures'
+import { useSwipeNavigation } from '../lib/gestures'
 import { openCamScanner, ScanFallbackDialog } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
@@ -110,8 +110,18 @@ export function CaseDetail({
     { key: 'material', label: '文书与证据', n: materials.length },
   ]
 
-  // 移动端：横向滑动返回上一页（挂在根节点上）
-  const swipeRef = useSwipeBack<HTMLDivElement>(onBack)
+  // 移动端：左边缘滑动=返回；屏幕中间左右滑=切换 tab
+  const tabOrder: Tab[] = ['overview', 'timeline', 'expense', 'material']
+  const turnTab = (dir: 1 | -1) => {
+    const next = tabOrder.indexOf(tab) + dir
+    if (next < 0 || next >= tabOrder.length) return
+    setTab(tabOrder[next])
+  }
+  const swipeRef = useSwipeNavigation<HTMLDivElement>({
+    onBack,
+    onPrevTab: () => turnTab(-1),
+    onNextTab: () => turnTab(1),
+  })
 
   return (
     <div ref={swipeRef} className="flex-1 overflow-y-auto pb-24 md:pb-0">
