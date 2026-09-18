@@ -7,6 +7,8 @@
   body,
   #root {
     height: 100%;
+    /* 禁止下拉刷新/滚动链：在列表顶部下滑时会误触发浏览器的刷新，容易丢当前录入状态 */
+    overscroll-behavior-y: none;
   }
   body {
     margin: 0;

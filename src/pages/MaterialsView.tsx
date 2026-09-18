@@ -32,7 +32,6 @@ import {
   setFileCategoryBatch,
 } from '../lib/docsOps'
 import type { CaseFolder, CaseRow, Dataset, DocFile } from '../lib/types'
-import { useSwipeDown } from '../lib/gestures'
 
 // ---------------- 本机设置（按设备存，电脑与手机各存各的） ----------------
 const K_ROLE = 'lw.docs.role'
@@ -1001,15 +1000,8 @@ function FolderEditor({
   const [mb, setMb] = useState(
     folderRow?.mobile_folder ?? (role === 'mobile' ? joinPath(rootPath, caseRow.client, 'mobile') : ''),
   )
-  // 移动端：向下滑动关闭弹层
-  const downRef = useSwipeDown<HTMLDivElement>(onClose)
-
   return (
-    <div
-      ref={downRef}
-      className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center" onClick={onClose}>
       <div
         className="w-full md:w-[480px] bg-white rounded-t-2xl md:rounded-xl p-5 space-y-3"
         onClick={(e) => e.stopPropagation()}

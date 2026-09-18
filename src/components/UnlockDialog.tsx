@@ -2,14 +2,12 @@ import { useState } from 'react'
 import { DEMO_PASSPHRASE, isCloud } from '../lib/data'
 import { useVault } from '../store/vault'
 import { Icon } from './Icon'
-import { useSwipeDown } from '../lib/gestures'
 
 export function UnlockDialog() {
   const { unlockOpen, closeUnlock, unlock, setup, busy, error, unlocked, needsSetup } = useVault()
   const [pw, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
   const [remember, setRemember] = useState(true)
-  const downRef = useSwipeDown<HTMLDivElement>(closeUnlock, unlockOpen && !unlocked)
 
   if (!unlockOpen || unlocked) return null
 
@@ -40,7 +38,7 @@ export function UnlockDialog() {
   const isSetup = needsSetup && isCloud
 
   return (
-    <div ref={downRef} className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-pop p-6">
         <div className="flex items-center gap-3 mb-1">
           <span className="w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center">
