@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
+import { openCamScanner, ScanFallbackDialog } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
 
@@ -86,6 +87,20 @@ export function CaseDetail({
 
   const d = daysUntil(c.next_due)
   const stage = normalizeStage(c.stage)
+
+  // 移动端拍照按钮：优先唤起扫描全能王，唤不醒再提示安装
+  const [scanFailed, setScanFailed] = useState(false)
+  const [scanBusy, setScanBusy] = useState(false)
+  const onScanTap = async () => {
+    if (scanBusy) return
+    setScanBusy(true)
+    try {
+      const ok = await openCamScanner()
+      if (!ok) setScanFailed(true)
+    } finally {
+      setScanBusy(false)
+    }
+  }
 
   const tabs: { key: Tab; label: string; n?: number }[] = [
     { key: 'overview', label: '概览' },
@@ -319,9 +334,17 @@ export function CaseDetail({
       </div>
 
       {/* 移动端浮动拍照按钮 */}
-      <button className="md:hidden fixed right-4 bottom-20 z-30 w-14 h-14 rounded-full bg-brand text-white shadow-pop flex items-center justify-center">
+      <button
+        type="button"
+        onClick={onScanTap}
+        disabled={scanBusy}
+        title="打开扫描全能王"
+        className="md:hidden fixed right-4 bottom-20 z-30 w-14 h-14 rounded-full bg-brand text-white shadow-pop flex items-center justify-center disabled:opacity-60"
+      >
         <Icon name="camera" className="w-6 h-6" />
       </button>
+
+      <ScanFallbackDialog open={scanFailed} onClose={() => setScanFailed(false)} />
 
       <div className="md:hidden fixed right-0 top-12">{right}</div>
     </div>
