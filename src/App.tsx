@@ -4,7 +4,8 @@ import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
 import { Icon } from './components/Icon'
 import { AuthProvider, authEnabled, useAuth } from './lib/auth'
-import { loadDataset } from './lib/data'
+import { isCloud, loadDataset } from './lib/data'
+import { clearCachedDataset, getCachedDataset, setCachedDataset } from './lib/datasetCache'
 import { Login } from './pages/Login'
 import { daysUntil, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type IntakeRow, type TimelineRow } from './lib/types'
 import { useVault } from './store/vault'
@@ -34,19 +35,46 @@ function Shell() {
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
   const { ready, unlocked, requestUnlock, setVerifier } = useVault()
 
+  // 登出 / 切换账号时清掉本地缓存，避免上一个用户的数据残留在本机
+  useEffect(() => {
+    if (authEnabled && !session) void clearCachedDataset()
+  }, [session])
+
   useEffect(() => {
     if (authEnabled && !session) return // 没登录就别去读数据，省得报一堆 401
-    setData(null)
     setErr('')
+    let cancelled = false
+    let painted = false // 是否已渲染出任何数据（缓存或网络）；用于决定失败时是否报错
+
+    // 1) 先用本地缓存即时出界面（秒开）：后台拉取完成后再覆盖为最新
+    void getCachedDataset<Dataset>().then((c) => {
+      if (cancelled || !c) return
+      painted = true
+      setVerifier(c.crypto?.verifier) // 注入口令校验串，输错口令会被拒绝
+      setData(c)
+    })
+
+    // 2) 后台拉最新数据；到位后覆盖缓存 + 渲染。阶段一中间态只在「尚无任何数据」时
+    //    才用（无缓存的首登），避免把已显示的完整缓存回退成「仅案件」造成列表闪空。
     loadDataset((d) => {
-      setVerifier(d.crypto?.verifier) // 注入口令校验串，输错口令会被拒绝
-      setData(d) // 阶段一（仅案件）先出界面，阶段二自动覆盖为完整数据
+      if (painted) return
+      painted = true
+      setVerifier(d.crypto?.verifier)
+      setData(d)
     })
       .then((d) => {
+        painted = true
         setVerifier(d.crypto?.verifier)
         setData(d)
+        if (isCloud) void setCachedDataset(d) // 仅云端数据入缓存；演示模式不缓存
       })
-      .catch((e: Error) => setErr(e.message))
+      .catch((e: Error) => {
+        if (!painted) setErr(e.message) // 缓存也没有、网络又失败才报错
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [session])
 
   const stats = useMemo(() => {
