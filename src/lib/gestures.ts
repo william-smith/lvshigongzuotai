@@ -76,9 +76,9 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
  * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
  *
  * 判定看**滑动距离 + 起手是否在 tab 条**，不看屏幕坐标（屏幕边缘是安卓系统热区，网页收不到）：
- * - 起手在 `data-swipe-tabs` 内 + 横向位移 50~120px（快 flick）→ 翻上一个/下一个 tab
- * - 横向位移 ≥120px（长滑，刻意拖拽）→ 返回，起手在任何位置都算，不限快慢
- * - 其余（太短）→ 忽略，不当手势
+ * - 起手在 `data-swipe-tabs` 内 + 横向位移 40~120px → 翻上一个/下一个 tab（不卡时间）
+ * - 横向位移 ≥120px（长滑）→ 返回，起手在任何位置都算，慢拖也认
+ * - 其余（太短或竖向主导）→ 忽略，不当手势
  *
  * 这样 tab 条上也能返回：短滑翻页、长滑返回，互不打架。
  *
@@ -102,7 +102,6 @@ export function useSwipeNavigation<T extends HTMLElement>({
 
     let x0 = 0
     let y0 = 0
-    let t0 = 0
     let onTabs = false
     let tracking = false
 
@@ -121,7 +120,6 @@ export function useSwipeNavigation<T extends HTMLElement>({
       tracking = true
       x0 = e.touches[0].clientX
       y0 = e.touches[0].clientY
-      t0 = Date.now()
       onTabs = !!node.closest('[data-swipe-tabs]')
     }
 
@@ -134,11 +132,10 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const dy = t.clientY - y0
       const ax = Math.abs(dx)
       const ay = Math.abs(dy)
-      const fast = Date.now() - t0 < 800
       // 竖向主导不算手势（避免和页面滚动打架）
       if (ax <= ay * 1.6) return
-      // 短滑（起手在 tab 条里、快 flick）= 翻页签
-      if (onTabs && ax >= 50 && ax < 120 && fast) {
+      // 短滑（起手在 tab 条里）= 翻页签（不卡时间：tab 条上的横向拖本就是有意翻页）
+      if (onTabs && ax >= 40 && ax < 120) {
         if (dx < 0) onNextTab?.()
         else onPrevTab?.()
         return
