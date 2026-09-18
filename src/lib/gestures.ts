@@ -75,10 +75,11 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
 /**
  * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
  *
- * 分层规则（避免两个手势互相打架）：
- * - 起点在屏幕左边缘 EDGE 像素内 → 只有「返回」响应（iOS 式 edge swipe）
- * - 其余区域 → 只有「翻上一个/下一个 tab」响应（左滑=下一个，右滑=上一个）
- * 两边互斥，一次手势不会同时触发两件事。
+ * 分层规则（对齐安卓 10+ 系统返回手势，左右两侧对称、左右手都顺手）：
+ * - 左边缘 EDGE 像素内 + 向右滑 → 返回
+ * - 右边缘 EDGE 像素内 + 向左滑 → 返回
+ * - 中间区域 + 左右滑     → 翻上一个/下一个 tab（左滑=下一个，右滑=上一个）
+ * 三个区间互斥，一次手势只触发一件事。边缘还限定方向：贴着左边却往左拖不算返回。
  */
 export function useSwipeNavigation<T extends HTMLElement>({
   onBack,
@@ -100,7 +101,7 @@ export function useSwipeNavigation<T extends HTMLElement>({
     let x0 = 0
     let y0 = 0
     let t0 = 0
-    let edge = false
+    let edge: 'left' | 'right' | null = null
     let tracking = false
 
     const onStart = (e: TouchEvent) => {
@@ -117,7 +118,8 @@ export function useSwipeNavigation<T extends HTMLElement>({
       x0 = e.touches[0].clientX
       y0 = e.touches[0].clientY
       t0 = Date.now()
-      edge = x0 <= edgeWidth
+      const w = window.innerWidth || Number.MAX_SAFE_INTEGER
+      edge = x0 <= edgeWidth ? 'left' : x0 >= w - edgeWidth ? 'right' : null
     }
 
     const onEnd = (e: TouchEvent) => {
@@ -130,11 +132,13 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const ax = Math.abs(dx)
       const ay = Math.abs(dy)
       const fast = Date.now() - t0 < 800
-      if (edge) {
-        if (ax >= 56 && ax > ay * 1.6 && fast) onBack()
+      // 边缘区：按方向判定返回（左边缘只认右滑，右边缘只认左滑）
+      if (edge && ax >= 56 && ax > ay * 1.6 && fast) {
+        if ((edge === 'left' && dx > 0) || (edge === 'right' && dx < 0)) onBack()
         return
       }
-      if (ax >= 72 && ax > ay * 1.8 && fast) {
+      // 中间区：翻 tab
+      if (!edge && ax >= 72 && ax > ay * 1.8 && fast) {
         if (dx < 0) onNextTab?.()
         else onPrevTab?.()
       }
