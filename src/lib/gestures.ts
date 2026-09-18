@@ -75,22 +75,22 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
 /**
  * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
  *
- * 分层规则（对齐安卓 10+ 系统返回手势，左右两侧对称、左右手都顺手）：
- * - 左边缘 EDGE 像素内 + 向右滑 → 返回
- * - 右边缘 EDGE 像素内 + 向左滑 → 返回
- * - 中间区域 + 左右滑     → 翻上一个/下一个 tab（左滑=下一个，右滑=上一个）
- * 三个区间互斥，一次手势只触发一件事。边缘还限定方向：贴着左边却往左拖不算返回。
+ * 判定看**起手位置在不在 tab 条里**，不看屏幕坐标：
+ * - 起点落在 `data-swipe-tabs` 元素内 → 左右滑 = 翻上一个/下一个 tab（左滑=下一个，右滑=上一个）
+ * - 其余任何位置横向滑         → 返回
+ *
+ * ⚠️ 不要改用「屏幕左右边缘」判定：安卓 10+ 全面屏手势会**优先吃掉屏幕边缘的滑动**
+ * （表现为滑一下直接回桌面），网页只能收到中间区域的事件，边缘方案实测不可用。
+ * tab 条虽然横跨整宽，但用户在那里起手多为横向翻页意图，且不涉及系统边缘热区。
  */
 export function useSwipeNavigation<T extends HTMLElement>({
   onBack,
   onPrevTab,
   onNextTab,
-  edgeWidth = 48,
 }: {
   onBack: () => void
   onPrevTab?: () => void
   onNextTab?: () => void
-  edgeWidth?: number
 }) {
   const ref = useRef<T | null>(null)
 
@@ -101,7 +101,7 @@ export function useSwipeNavigation<T extends HTMLElement>({
     let x0 = 0
     let y0 = 0
     let t0 = 0
-    let edge: 'left' | 'right' | null = null
+    let onTabs = false
     let tracking = false
 
     const onStart = (e: TouchEvent) => {
@@ -111,15 +111,16 @@ export function useSwipeNavigation<T extends HTMLElement>({
       if (!node || inside(node.tagName)) return
       let p: HTMLElement | null = node
       while (p && p !== el) {
-        if (p.scrollWidth - p.clientWidth > 8) return
+        // tab 条自身可横向滚动（页签多时），这种容器我们不在这里排除，
+        // 而是交由下面的 onTabs 分支识别
+        if (p.scrollWidth - p.clientWidth > 8 && !p.hasAttribute('data-swipe-tabs')) return
         p = p.parentElement
       }
       tracking = true
       x0 = e.touches[0].clientX
       y0 = e.touches[0].clientY
       t0 = Date.now()
-      const w = window.innerWidth || Number.MAX_SAFE_INTEGER
-      edge = x0 <= edgeWidth ? 'left' : x0 >= w - edgeWidth ? 'right' : null
+      onTabs = !!node.closest('[data-swipe-tabs]')
     }
 
     const onEnd = (e: TouchEvent) => {
@@ -132,16 +133,16 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const ax = Math.abs(dx)
       const ay = Math.abs(dy)
       const fast = Date.now() - t0 < 800
-      // 边缘区：按方向判定返回（左边缘只认右滑，右边缘只认左滑）
-      if (edge && ax >= 56 && ax > ay * 1.6 && fast) {
-        if ((edge === 'left' && dx > 0) || (edge === 'right' && dx < 0)) onBack()
+      if (onTabs) {
+        // tab 条上：左右滑翻页签
+        if (ax >= 56 && ax > ay * 1.6 && fast) {
+          if (dx < 0) onNextTab?.()
+          else onPrevTab?.()
+        }
         return
       }
-      // 中间区：翻 tab
-      if (!edge && ax >= 72 && ax > ay * 1.8 && fast) {
-        if (dx < 0) onNextTab?.()
-        else onPrevTab?.()
-      }
+      // 其余区域：任意方向横向滑 = 返回
+      if (ax >= 64 && ax > ay * 1.6 && fast) onBack()
     }
 
     const onCancel = () => (tracking = false)
@@ -154,7 +155,7 @@ export function useSwipeNavigation<T extends HTMLElement>({
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onCancel)
     }
-  }, [onBack, onPrevTab, onNextTab, edgeWidth])
+  }, [onBack, onPrevTab, onNextTab])
 
   return ref
 }

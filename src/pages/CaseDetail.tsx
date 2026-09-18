@@ -195,7 +195,8 @@ export function CaseDetail({
 
         {/* 页签 */}
         <div className="bg-white rounded-xl border border-line shadow-card overflow-hidden">
-          <div className="flex gap-1 px-3 border-b border-line overflow-x-auto">
+          {/* data-swipe-tabs：在这条 tab 上左右滑=切换页签（其余区域横向滑=返回） */}
+          <div data-swipe-tabs className="flex gap-1 px-3 border-b border-line overflow-x-auto">
             {tabs.map((t) => (
               <button
                 key={t.key}
