@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from './Icon'
 import { previewUrl, type FsFileHandle } from '../lib/fsAccess'
 import { isImage } from '../lib/docCategory'
+import { useSwipeDown } from '../lib/gestures'
 
 /**
  * 本地文件预览。
@@ -48,8 +49,15 @@ export function DocPreview({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // 移动端：向下滑动关闭预览
+  const downRef = useSwipeDown<HTMLDivElement>(onClose)
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 flex flex-col" onClick={onClose}>
+    <div
+      ref={downRef}
+      className="fixed inset-0 z-50 bg-black/85 flex flex-col"
+      onClick={onClose}
+    >
       <div
         className="h-12 shrink-0 flex items-center gap-3 px-4 text-white/90"
         onClick={(e) => e.stopPropagation()}

@@ -3,6 +3,7 @@ import { Icon } from '../components/Icon'
 import { useVault } from '../store/vault'
 import { deleteExpense, saveExpense, type ExpenseDraft } from '../lib/expenseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
+import { useSwipeBack } from '../lib/gestures'
 import type { ExpenseRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
@@ -179,10 +180,14 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
     }
   }
 
+  // 移动端：横向滑动关闭编辑页
+  const swipeRef = useSwipeBack<HTMLFormElement>(onClose)
+
   return (
     <div className="fixed inset-0 z-40 flex items-end md:items-center justify-center bg-ink/40 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
       <form
+        ref={swipeRef}
         onSubmit={submit}
         className="relative w-full md:max-w-xl bg-white md:rounded-2xl rounded-t-2xl shadow-pop flex flex-col max-h-[92vh] overflow-hidden"
       >

@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
+import { useSwipeBack } from '../lib/gestures'
 import { openCamScanner, ScanFallbackDialog } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
@@ -109,8 +110,11 @@ export function CaseDetail({
     { key: 'material', label: '文书与证据', n: materials.length },
   ]
 
+  // 移动端：横向滑动返回上一页（挂在根节点上）
+  const swipeRef = useSwipeBack<HTMLDivElement>(onBack)
+
   return (
-    <div className="flex-1 overflow-y-auto pb-24 md:pb-0">
+    <div ref={swipeRef} className="flex-1 overflow-y-auto pb-24 md:pb-0">
       {/* 桌面顶栏 */}
       <div className="hidden md:flex h-14 items-center gap-3 px-6 bg-white border-b border-line sticky top-0 z-10">
         <button

@@ -12,6 +12,7 @@
  */
 
 import { Icon } from './Icon'
+import { useSwipeDown } from '../lib/gestures'
 
 const IOS_STORE = 'https://apps.apple.com/cn/search?term=camscanner'
 const ANDROID_STORE = 'https://play.google.com/store/search?q=camscanner'
@@ -96,10 +97,11 @@ export function ScanStoreUrl() {
 }
 
 export function ScanFallbackDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const downRef = useSwipeDown<HTMLDivElement>(onClose, open)
   if (!open) return null
   const platform = detectPlatform()
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
+    <div ref={downRef} className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-pop p-6">
         <div className="flex items-center gap-3 mb-1">
           <span className="w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center">

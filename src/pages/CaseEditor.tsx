@@ -3,6 +3,7 @@ import { Icon } from '../components/Icon'
 import { useVault } from '../store/vault'
 import { deleteCase, saveCase, type CaseDraft } from '../lib/caseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
+import { useSwipeBack } from '../lib/gestures'
 import { defaultAt, toDateTimeLocal, type CaseRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
@@ -177,10 +178,14 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
     }
   }
 
+  // 移动端：横向滑动关闭编辑页
+  const swipeRef = useSwipeBack<HTMLFormElement>(onClose)
+
   return (
     <div className="fixed inset-0 z-40 flex items-end md:items-center justify-center bg-ink/40 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
       <form
+        ref={swipeRef}
         onSubmit={submit}
         className="relative w-full md:max-w-xl bg-white md:rounded-2xl rounded-t-2xl shadow-pop flex flex-col max-h-[92vh] overflow-hidden"
       >
