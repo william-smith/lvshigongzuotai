@@ -75,13 +75,15 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
 /**
  * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
  *
- * 判定看**起手位置在不在 tab 条里**，不看屏幕坐标：
- * - 起点落在 `data-swipe-tabs` 元素内 → 左右滑 = 翻上一个/下一个 tab（左滑=下一个，右滑=上一个）
- * - 其余任何位置横向滑         → 返回
+ * 判定看**滑动距离 + 起手是否在 tab 条**，不看屏幕坐标（屏幕边缘是安卓系统热区，网页收不到）：
+ * - 起手在 `data-swipe-tabs` 内 + 横向位移 50~120px（快 flick）→ 翻上一个/下一个 tab
+ * - 横向位移 ≥120px（长滑，刻意拖拽）→ 返回，起手在任何位置都算，不限快慢
+ * - 其余（太短）→ 忽略，不当手势
+ *
+ * 这样 tab 条上也能返回：短滑翻页、长滑返回，互不打架。
  *
  * ⚠️ 不要改用「屏幕左右边缘」判定：安卓 10+ 全面屏手势会**优先吃掉屏幕边缘的滑动**
  * （表现为滑一下直接回桌面），网页只能收到中间区域的事件，边缘方案实测不可用。
- * tab 条虽然横跨整宽，但用户在那里起手多为横向翻页意图，且不涉及系统边缘热区。
  */
 export function useSwipeNavigation<T extends HTMLElement>({
   onBack,
@@ -133,16 +135,16 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const ax = Math.abs(dx)
       const ay = Math.abs(dy)
       const fast = Date.now() - t0 < 800
-      if (onTabs) {
-        // tab 条上：左右滑翻页签
-        if (ax >= 56 && ax > ay * 1.6 && fast) {
-          if (dx < 0) onNextTab?.()
-          else onPrevTab?.()
-        }
+      // 竖向主导不算手势（避免和页面滚动打架）
+      if (ax <= ay * 1.6) return
+      // 短滑（起手在 tab 条里、快 flick）= 翻页签
+      if (onTabs && ax >= 50 && ax < 120 && fast) {
+        if (dx < 0) onNextTab?.()
+        else onPrevTab?.()
         return
       }
-      // 其余区域：任意方向横向滑 = 返回
-      if (ax >= 64 && ax > ay * 1.6 && fast) onBack()
+      // 长距离横向滑 = 返回（起手在任何位置都算，慢拖也认）
+      if (ax >= 120) onBack()
     }
 
     const onCancel = () => (tracking = false)
