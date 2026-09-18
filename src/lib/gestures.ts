@@ -75,12 +75,12 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
 /**
  * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
  *
- * 判定看**滑动距离 + 起手是否在 tab 条**，不看屏幕坐标（屏幕边缘是安卓系统热区，网页收不到）：
- * - 起手在 `data-swipe-tabs` 内 + 横向位移 40~120px → 翻上一个/下一个 tab（不卡时间）
+ * 判定看**滑动距离**，不看屏幕坐标（屏幕边缘是安卓系统热区，网页收不到）：
+ * - 横向位移 40~120px（短滑）→ 翻上一个/下一个 tab，**起手在任何位置都算**（整屏可翻页）
  * - 横向位移 ≥120px（长滑）→ 返回，起手在任何位置都算，慢拖也认
- * - 其余（太短或竖向主导）→ 忽略，不当手势
+ * - 太短（<40px）或竖向主导 → 忽略，不当手势
  *
- * 这样 tab 条上也能返回：短滑翻页、长滑返回，互不打架。
+ * 这样整个屏幕短滑都能翻页、长滑才返回，不必够到 tab 条。
  *
  * ⚠️ 不要改用「屏幕左右边缘」判定：安卓 10+ 全面屏手势会**优先吃掉屏幕边缘的滑动**
  * （表现为滑一下直接回桌面），网页只能收到中间区域的事件，边缘方案实测不可用。
@@ -102,7 +102,6 @@ export function useSwipeNavigation<T extends HTMLElement>({
 
     let x0 = 0
     let y0 = 0
-    let onTabs = false
     let tracking = false
 
     const onStart = (e: TouchEvent) => {
@@ -112,15 +111,14 @@ export function useSwipeNavigation<T extends HTMLElement>({
       if (!node || inside(node.tagName)) return
       let p: HTMLElement | null = node
       while (p && p !== el) {
-        // tab 条自身可横向滚动（页签多时），这种容器我们不在这里排除，
-        // 而是交由下面的 onTabs 分支识别
+        // 可横向滚动的容器（如费用表格）不接管，让原生横向滚动；
+        // 唯独 tab 条本身也横向可滚，但它需要响应横滑翻页，故豁免
         if (p.scrollWidth - p.clientWidth > 8 && !p.hasAttribute('data-swipe-tabs')) return
         p = p.parentElement
       }
       tracking = true
       x0 = e.touches[0].clientX
       y0 = e.touches[0].clientY
-      onTabs = !!node.closest('[data-swipe-tabs]')
     }
 
     const onEnd = (e: TouchEvent) => {
@@ -134,13 +132,13 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const ay = Math.abs(dy)
       // 竖向主导不算手势（避免和页面滚动打架）
       if (ax <= ay * 1.6) return
-      // 短滑（起手在 tab 条里）= 翻页签（不卡时间：tab 条上的横向拖本就是有意翻页）
-      if (onTabs && ax >= 40 && ax < 120) {
+      // 短滑（40~120px）= 翻上一个/下一个 tab，起手在任何位置都算（整屏可翻页）
+      if (ax >= 40 && ax < 120) {
         if (dx < 0) onNextTab?.()
         else onPrevTab?.()
         return
       }
-      // 长距离横向滑 = 返回（起手在任何位置都算，慢拖也认）
+      // 长距离横向滑（≥120px）= 返回，起手在任何位置都算，慢拖也认
       if (ax >= 120) onBack()
     }
 
