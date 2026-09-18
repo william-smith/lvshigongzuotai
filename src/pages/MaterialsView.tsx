@@ -174,6 +174,24 @@ export function MaterialsView({
     setSelected(new Set())
   }, [caseId])
 
+  // 分类级全选：判断该分类下文件是否全部选中
+  const catAllSelected = (list: { relPath: string }[]) =>
+    !!current && list.length > 0 && list.every((r) => selected.has(`${current.id}|${r.relPath}`))
+  // 分类级全选/取消全选
+  const toggleCatSelect = (list: { relPath: string }[]) => {
+    if (!current) return
+    const keys = list.map((r) => `${current.id}|${r.relPath}`)
+    setSelected((p) => {
+      const n = new Set(p)
+      const all = keys.every((k) => n.has(k))
+      for (const k of keys) {
+        if (all) n.delete(k)
+        else n.add(k)
+      }
+      return n
+    })
+  }
+
   // 进入/退出「选择模式」：退出时清空选择，回到纯浏览态
   const toggleSelectMode = () => {
     if (selectMode) setSelected(new Set())
@@ -736,6 +754,20 @@ export function MaterialsView({
                     <span className="text-2xs text-ink-3 shrink-0">{list.length}</span>
                   </button>
                   <div className="flex items-center gap-1 shrink-0">
+                    {selectMode && list.length > 0 && (
+                      <label
+                        className="flex items-center gap-1 text-2xs text-ink-2 select-none cursor-pointer mr-1"
+                        title={catAllSelected(list) ? '取消全选' : '全选本分类'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={catAllSelected(list)}
+                          onChange={() => toggleCatSelect(list)}
+                          className="w-3.5 h-3.5 accent-[#1D4ED8]"
+                        />
+                        全选
+                      </label>
+                    )}
                     <select
                       value={sortOf(cat.id).key}
                       onChange={(e) => {
