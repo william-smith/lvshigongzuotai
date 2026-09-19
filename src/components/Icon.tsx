@@ -1,5 +1,6 @@
 export type IconName =
   | 'home'
+  | 'agent'
   | 'case'
   | 'file'
   | 'archive'
@@ -27,6 +28,9 @@ export type IconName =
 
 const paths: Record<IconName, string> = {
   home: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
+  // 智能体：圆角方头 + 顶部天线 + 两只眼睛
+  agent:
+    'M5 10h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zM12 10V6M10.5 6h3M9 13.5h1.5M13.5 13.5h1.5',
   case: 'M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M4 12h16',
   file: 'M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7zM14 3v4h4M9 13h6M9 17h4',
   archive: 'M3 7h18v4H3zM5 11v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9M10 15h4',

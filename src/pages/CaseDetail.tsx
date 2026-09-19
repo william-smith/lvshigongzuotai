@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
@@ -90,6 +90,8 @@ export function CaseDetail({
   // 移动端拍照按钮：优先唤起扫描全能王，唤不醒再提示安装
   const [scanFailed, setScanFailed] = useState(false)
   const [scanBusy, setScanBusy] = useState(false)
+  // 桌面顶栏「智能体」入口弹窗
+  const [agentOpen, setAgentOpen] = useState(false)
   const onScanTap = async () => {
     if (scanBusy) return
     setScanBusy(true)
@@ -149,12 +151,12 @@ export function CaseDetail({
           <Icon name="settings" className="w-4 h-4" />
           编辑
         </button>
-        <button className="h-9 px-3 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas flex items-center gap-1.5">
-          <Icon name="plus" className="w-4 h-4" />
-          上传材料
-        </button>
-        <button className="h-9 px-3 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-hover">
-          生成文书
+        <button
+          onClick={() => setAgentOpen(true)}
+          className="h-9 px-3 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-hover flex items-center gap-1.5"
+        >
+          <Icon name="agent" className="w-4 h-4" />
+          智能体
         </button>
       </div>
 
@@ -358,10 +360,239 @@ export function CaseDetail({
       </button>
 
       <ScanFallbackDialog open={scanFailed} onClose={() => setScanFailed(false)} />
+      <AgentSheet open={agentOpen} onClose={() => setAgentOpen(false)} />
     </div>
   )
 }
 
 function Empty({ text }: { text: string }) {
   return <div className="py-12 text-center text-sm text-ink-3">{text}</div>
+}
+
+/**
+ * 详情页「智能体」入口：材料走 Verysync 同步，不需要在此上传；
+ * 「生成文书」改为打开本机智能体 App。
+ *
+ * 通用性说明（不查本机注册表）：
+ * - 列表由配置驱动，预置 WorkBuddy，其余靠用户「添加智能体」自行登记。
+ * - 每个智能体可填 scheme://（唤起本机 App，系统弹窗）或 https://（网页版兜底）。
+ * - 自定义项存 localStorage，按浏览器/账户隔离，换电脑各自配置即可。
+ * - 唤起是否能成功取决于本机是否装了该 App 并注册了对应 scheme，网页无法预知，
+ *   只能「试跳一下」再用页面失焦反推；失败则降级打开网页版或提示。
+ */
+type Agent = { id: string; name: string; desc: string; scheme?: string; web?: string }
+
+const PRESET_AGENTS: Agent[] = [
+  { id: 'workbuddy', name: 'WorkBuddy', desc: '本机智能体', scheme: 'workbuddy://', web: 'https://www.workbuddy.cn/' },
+]
+
+const AGENT_STORE_KEY = 'lw.agents'
+
+function readCustomAgents(): Agent[] {
+  try {
+    const raw = localStorage.getItem(AGENT_STORE_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+
+function detectPlatform(): 'ios' | 'android' | 'other' {
+  const ua = navigator.userAgent || ''
+  if (/Android/i.test(ua)) return 'android'
+  if (/iPad|iPhone|iPod/.test(ua)) return 'ios'
+  if (navigator.platform === 'MacIntel' && (navigator as { maxTouchPoints?: number }).maxTouchPoints! > 1) return 'ios'
+  return 'other'
+}
+
+function fireUrl(url: string, platform: 'ios' | 'android' | 'other') {
+  if (platform === 'ios') {
+    const iframe = document.createElement('iframe')
+    iframe.style.display = 'none'
+    iframe.src = url
+    document.body.appendChild(iframe)
+    setTimeout(() => iframe.remove(), 1200)
+  } else {
+    const a = document.createElement('a')
+    a.href = url
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => a.remove(), 1200)
+  }
+}
+
+/** 试跳一次，返回「看起来跳走了没」 */
+function tryLaunch(url: string, timeout: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('blur', onHide)
+      resolve(ok)
+    }
+    const onHide = () => {
+      if (document.hidden) finish(true)
+    }
+    const timer = setTimeout(() => finish(false), timeout)
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', onHide)
+    window.addEventListener('blur', onHide)
+    fireUrl(url, detectPlatform())
+  })
+}
+
+function AgentSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [custom, setCustom] = useState<Agent[]>(() => readCustomAgents())
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [failedId, setFailedId] = useState<string | null>(null)
+
+  // 每次打开重置上次的状态
+  useEffect(() => {
+    setFailedId(null)
+    setAdding(false)
+    setName('')
+    setUrl('')
+  }, [open])
+
+  if (!open) return null
+
+  const all = [...PRESET_AGENTS, ...custom]
+
+  const launch = async (a: Agent) => {
+    setFailedId(null)
+    if (a.scheme) {
+      const ok = await tryLaunch(a.scheme, 1200)
+      if (ok) {
+        onClose()
+        return
+      }
+    }
+    if (a.web) {
+      window.open(a.web, '_blank')
+      onClose()
+      return
+    }
+    setFailedId(a.id)
+  }
+
+  const saveCustom = () => {
+    const n = name.trim()
+    const u = url.trim()
+    if (!n || !u) return
+    const isHttp = u.startsWith('http')
+    const next: Agent[] = [
+      ...custom,
+      { id: 'c_' + Date.now(), name: n, desc: '自定义', scheme: isHttp ? undefined : u, web: isHttp ? u : undefined },
+    ]
+    setCustom(next)
+    localStorage.setItem(AGENT_STORE_KEY, JSON.stringify(next))
+    setName('')
+    setUrl('')
+    setAdding(false)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-pop p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-base font-semibold text-ink">打开智能体</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center text-ink-2 hover:bg-canvas rounded-lg"
+          >
+            <Icon name="close" className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-xs text-ink-2 mb-4">选择要打开的智能体应用（材料通过 Verysync 同步，无需在本页上传）</p>
+
+        <div className="space-y-2">
+          {all.map((a) => (
+            <div key={a.id} className="rounded-xl border border-line p-3">
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center shrink-0">
+                  <Icon name="agent" className="w-4.5 h-4.5" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-ink">{a.name}</div>
+                  <div className="text-2xs text-ink-3 truncate">{a.desc}</div>
+                </div>
+                <button
+                  onClick={() => launch(a)}
+                  className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover shrink-0"
+                >
+                  打开
+                </button>
+              </div>
+              {failedId === a.id && (
+                <div className="mt-2 text-2xs text-danger">
+                  未能唤起「{a.name}」。
+                  {a.web ? (
+                    <a href={a.web} target="_blank" rel="noreferrer" className="underline" onClick={onClose}>
+                      打开网页版
+                    </a>
+                  ) : (
+                    '本机似乎未安装或系统拦下了跳转，请在桌面端打开。'
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {adding ? (
+          <div className="mt-3 rounded-xl border border-line p-3 space-y-2">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="智能体名称"
+              className="w-full h-9 px-3 rounded-lg border border-line text-sm outline-none focus:border-brand"
+            />
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="唤起地址（scheme:// 或 https://）"
+              className="w-full h-9 px-3 rounded-lg border border-line text-sm outline-none focus:border-brand"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setAdding(false)
+                  setName('')
+                  setUrl('')
+                }}
+                className="flex-1 h-9 rounded-lg border border-line text-sm text-ink-2"
+              >
+                取消
+              </button>
+              <button onClick={saveCustom} className="flex-1 h-9 rounded-lg bg-brand text-white text-sm font-medium">
+                保存
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="mt-3 w-full h-9 rounded-lg border border-dashed border-line text-sm text-ink-2 hover:bg-canvas flex items-center justify-center gap-1"
+          >
+            <Icon name="plus" className="w-4 h-4" />
+            添加智能体
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
