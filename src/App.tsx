@@ -33,7 +33,7 @@ function Shell() {
   const [editingIntake, setEditingIntake] = useState<IntakeRow | null | undefined>(undefined)
   const [editingTimeline, setEditingTimeline] = useState<TimelineRow | null | undefined>(undefined)
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
-  const { ready, unlocked, requestUnlock, setVerifier } = useVault()
+  const { ready, unlocked, requestUnlock, lock, setVerifier } = useVault()
 
   // 登出 / 切换账号时清掉本地缓存，避免上一个用户的数据残留在本机
   useEffect(() => {
@@ -232,9 +232,9 @@ function Shell() {
                     <Icon name="settings" className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={unlocked ? undefined : requestUnlock}
+                    onClick={unlocked ? lock : requestUnlock}
                     className="w-9 h-9 flex items-center justify-center text-ink-2"
-                    title={unlocked ? '已解锁' : '解锁敏感信息'}
+                    title={unlocked ? '锁定敏感信息' : '解锁敏感信息'}
                   >
                     <Icon name={unlocked ? 'unlock' : 'lock'} className="w-4 h-4" />
                   </button>
@@ -252,14 +252,6 @@ function Shell() {
               onCreateExpense={() => setEditingExpense(null)}
               onEditExpense={(e) => setEditingExpense(e)}
               onDeleteExpense={requestDeleteExpense}
-              right={
-                <button
-                  onClick={unlocked ? undefined : requestUnlock}
-                  className="w-9 h-9 flex items-center justify-center text-ink-2"
-                >
-                  <Icon name={unlocked ? 'unlock' : 'lock'} className="w-4 h-4" />
-                </button>
-              }
             />
 
             {editingTimeline !== undefined && (

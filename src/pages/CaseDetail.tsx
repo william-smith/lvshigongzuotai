@@ -52,7 +52,6 @@ export function CaseDetail({
   data,
   onBack,
   onEdit,
-  right,
   onCreateTimeline,
   onEditTimeline,
   onDeleteTimeline,
@@ -64,7 +63,6 @@ export function CaseDetail({
   data: Dataset
   onBack: () => void
   onEdit: () => void
-  right?: ReactNode
   onCreateTimeline: () => void
   onEditTimeline: (t: TimelineRow) => void
   onDeleteTimeline: (id: number) => void
@@ -360,8 +358,6 @@ export function CaseDetail({
       </button>
 
       <ScanFallbackDialog open={scanFailed} onClose={() => setScanFailed(false)} />
-
-      <div className="md:hidden fixed right-0 top-12">{right}</div>
     </div>
   )
 }
