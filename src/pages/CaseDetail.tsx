@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
 import { useSwipeNavigation } from '../lib/gestures'
-import { ScanStoreUrl, openScheme } from '../components/ScanLauncher'
+import { appStores, openScheme } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
 
@@ -592,11 +592,26 @@ function AgentSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
  * - 系统相机通过 <input capture> 调起，拍完下载到「下载」文件夹，提示用户移入本案 Verysync 同步目录；
  *   网页无法写入任意本地目录，这一步由用户手动完成（与 CamScanner 流程一致）。
  */
-type Scanner = { id: string; name: string; desc: string; scheme?: string; web?: string; capture?: boolean }
+type Scanner = {
+  id: string
+  name: string
+  desc: string
+  scheme?: string
+  web?: string
+  capture?: boolean
+  /** 未安装时在应用市场里搜什么（默认取 name） */
+  keyword?: string
+}
 
 const PRESET_SCANNERS: Scanner[] = [
   { id: 'camera', name: '系统相机', desc: '直接用手机相机拍照', capture: true },
-  { id: 'camscanner', name: '扫描全能王', desc: '专业文档扫描 / 自动校正', scheme: 'camscanner://', web: ScanStoreUrl() },
+  {
+    id: 'camscanner',
+    name: '扫描全能王',
+    desc: '专业文档扫描 / 自动校正',
+    scheme: 'camscanner://',
+    keyword: '扫描全能王',
+  },
 ]
 
 const SCANNER_STORE_KEY = 'lw.scanners'
@@ -733,13 +748,35 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                 </button>
               </div>
               {failedId === s.id && (
-                <div className="mt-2 text-2xs text-danger">
-                  {s.web ? (
-                    <a href={s.web} target="_blank" rel="noreferrer" className="underline" onClick={onClose}>
-                      {/play\.google\.com|apps\.apple\.com/.test(s.web) ? '前往应用商店安装' : '打开网页版'}
+                <div className="mt-2 pt-2 border-t border-line">
+                  {!s.scheme && s.web ? (
+                    <a href={s.web} target="_blank" rel="noreferrer" className="text-2xs text-danger underline">
+                      打开网页版
                     </a>
                   ) : (
-                    '本机似乎未安装或系统拦下了跳转，请在桌面端打开。'
+                    <>
+                      <div className="text-2xs text-danger">
+                        没能唤起{s.name}，可能未安装或被系统拦下。可在应用市场搜索「{s.keyword || s.name}」安装：
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {appStores(s.keyword || s.name).map((st) => (
+                          <a
+                            key={st.id}
+                            href={st.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`px-2 py-1 rounded-md border text-2xs hover:bg-canvas ${
+                              st.recommend ? 'border-brand text-brand' : 'border-line text-ink-2'
+                            }`}
+                          >
+                            {st.name}
+                          </a>
+                        ))}
+                      </div>
+                      <div className="mt-1 text-2xs text-ink-3">
+                        部分厂商市场没有公开的搜索链接，打开后请在市场内搜索上面的关键词。
+                      </div>
+                    </>
                   )}
                 </div>
               )}

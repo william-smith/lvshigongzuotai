@@ -13,8 +13,69 @@
 
 import { Icon } from './Icon'
 
-const IOS_STORE = 'https://apps.apple.com/cn/search?term=camscanner'
-const ANDROID_STORE = 'https://play.google.com/store/search?q=camscanner'
+/** 应用市场条目 */
+export type AppStore = { id: string; name: string; url: string; recommend?: boolean }
+
+/**
+ * 各应用市场入口。**刻意不绑死 Google Play**——国内机器多是华为 / 荣耀 / 小米 / OPPO / vivo
+ * 自带市场，装没装 Play 都不一定。规则：
+ * - 能确定搜索深链的（苹果 App Store、Google Play）直接带关键词搜索；
+ * - 其余厂商网页端没有公开稳定的搜索深链（多为 SPA hash 路由，改版即失效），
+ *   只给官网首页，宁可让用户进市场里搜一次，也不给打不开的链接；
+ * - Android 另给 `market://search?q=`：交给**本机默认应用市场**接管的通用方案，
+ *   华为 / 荣耀 / 小米 / OPPO / vivo 都会响应，不依赖任何具体商店。
+ */
+const STORE_DEFS: Record<string, { name: string; build: (kw: string) => string }> = {
+  apple: { name: 'App Store', build: (kw) => `https://apps.apple.com/cn/search?term=${kw}` },
+  market: { name: '本机应用市场', build: (kw) => `market://search?q=${kw}` },
+  huawei: { name: '华为应用市场', build: () => 'https://appgallery.huawei.com/' },
+  honor: { name: '荣耀应用市场', build: () => 'https://www.honor.com/cn/tech/honor-app-market/' },
+  xiaomi: { name: '小米应用商店', build: () => 'https://app.mi.com/' },
+  oppo: { name: 'OPPO 软件商店', build: () => 'https://store.oppomobile.com/' },
+  vivo: { name: 'vivo 应用商店', build: () => 'https://app.vivo.com.cn/' },
+  google: { name: 'Google Play', build: (kw) => `https://play.google.com/store/search?q=${kw}&c=apps` },
+  yyb: { name: '应用宝', build: () => 'https://sj.qq.com/' },
+}
+
+/** 粗略识别手机品牌，只用来把最可能的市场排在最前，不据此屏蔽其它市场 */
+export function detectBrand(): string {
+  const ua = navigator.userAgent || ''
+  if (/iPad|iPhone|iPod/.test(ua)) return 'apple'
+  if (/HarmonyOS|HUAWEI|Huawei/i.test(ua)) return 'huawei'
+  if (/HONOR|Honor/i.test(ua)) return 'honor'
+  if (/Xiaomi|Redmi|POCO/i.test(ua)) return 'xiaomi'
+  if (/OPPO|realme/i.test(ua)) return 'oppo'
+  if (/vivo/i.test(ua)) return 'vivo'
+  if (/Android/i.test(ua)) return 'android'
+  return 'other'
+}
+
+const BRAND_FIRST: Record<string, string[]> = {
+  apple: ['apple'],
+  huawei: ['market', 'huawei', 'yyb', 'google'],
+  honor: ['market', 'honor', 'huawei', 'yyb', 'google'],
+  xiaomi: ['market', 'xiaomi', 'yyb', 'google'],
+  oppo: ['market', 'oppo', 'yyb', 'google'],
+  vivo: ['market', 'vivo', 'yyb', 'google'],
+  android: ['market', 'yyb', 'huawei', 'honor', 'xiaomi', 'google'],
+  other: ['apple', 'google', 'huawei', 'honor', 'xiaomi', 'yyb'],
+}
+
+/** 按本机品牌排序的应用市场列表，供「未安装」时就地提示使用 */
+export function appStores(keyword: string): AppStore[] {
+  const kw = encodeURIComponent(keyword || '')
+  const order = BRAND_FIRST[detectBrand()] || BRAND_FIRST.other
+  const seen = new Set<string>()
+  const out: AppStore[] = []
+  order.forEach((id, idx) => {
+    if (seen.has(id)) return
+    const def = STORE_DEFS[id]
+    if (!def) return
+    seen.add(id)
+    out.push({ id, name: def.name, url: def.build(kw), recommend: idx === 0 })
+  })
+  return out
+}
 
 type Platform = 'ios' | 'android' | 'other'
 
@@ -97,8 +158,12 @@ export async function openScheme(url: string): Promise<boolean> {
   return tryOnce(url, platform, 1200)
 }
 
-export function ScanStoreUrl() {
-  return detectPlatform() === 'ios' ? IOS_STORE : ANDROID_STORE
+/** 推荐的应用市场地址（按本机品牌猜，猜不出给通用兜底）。旧接口，保留兼容。 */
+export function ScanStoreUrl(keyword = 'camscanner') {
+  return (
+    appStores(keyword)[0]?.url ||
+    `https://play.google.com/store/search?q=${encodeURIComponent(keyword)}&c=apps`
+  )
 }
 
 export function ScanFallbackDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
