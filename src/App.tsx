@@ -233,7 +233,9 @@ function Shell() {
                   </button>
                   <button
                     onClick={unlocked ? lock : requestUnlock}
-                    className="w-9 h-9 flex items-center justify-center text-ink-2"
+                    className={`w-9 h-9 flex items-center justify-center ${
+                      unlocked ? 'text-brand' : 'text-ink-2'
+                    }`}
                     title={unlocked ? '锁定敏感信息' : '解锁敏感信息'}
                   >
                     <Icon name={unlocked ? 'unlock' : 'lock'} className="w-4 h-4" />
