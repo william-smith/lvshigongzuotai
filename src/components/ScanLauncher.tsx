@@ -50,31 +50,34 @@ export function detectBrand(): string {
   return 'other'
 }
 
-const BRAND_FIRST: Record<string, string[]> = {
+/** 全部市场入口，按固定基础顺序展示；品牌识别只决定谁排最前 */
+const STORE_ORDER = ['apple', 'market', 'huawei', 'honor', 'xiaomi', 'oppo', 'vivo', 'yyb', 'google']
+
+/** 品牌 → 应排最前的市场（只影响排序，不裁剪列表；保证任何机器都能看到全部市场） */
+const BRAND_PRIORITY: Record<string, string[]> = {
   apple: ['apple'],
-  huawei: ['market', 'huawei', 'yyb', 'google'],
-  honor: ['market', 'honor', 'huawei', 'yyb', 'google'],
-  xiaomi: ['market', 'xiaomi', 'yyb', 'google'],
-  oppo: ['market', 'oppo', 'yyb', 'google'],
-  vivo: ['market', 'vivo', 'yyb', 'google'],
-  android: ['market', 'yyb', 'huawei', 'honor', 'xiaomi', 'google'],
-  other: ['apple', 'google', 'huawei', 'honor', 'xiaomi', 'yyb'],
+  huawei: ['market', 'huawei'],
+  honor: ['market', 'honor'],
+  xiaomi: ['market', 'xiaomi'],
+  oppo: ['market', 'oppo'],
+  vivo: ['market', 'vivo'],
+  android: ['market'],
+  other: [],
 }
 
-/** 按本机品牌排序的应用市场列表，供「未安装」时就地提示使用 */
+/** 应用市场完整列表（品牌猜测的排最前并标 recommend）。iOS 上剔除 market://（无意义）。 */
 export function appStores(keyword: string): AppStore[] {
   const kw = encodeURIComponent(keyword || '')
-  const order = BRAND_FIRST[detectBrand()] || BRAND_FIRST.other
-  const seen = new Set<string>()
-  const out: AppStore[] = []
-  order.forEach((id, idx) => {
-    if (seen.has(id)) return
-    const def = STORE_DEFS[id]
-    if (!def) return
-    seen.add(id)
-    out.push({ id, name: def.name, url: def.build(kw), recommend: idx === 0 })
-  })
-  return out
+  const brand = detectBrand()
+  const prio = BRAND_PRIORITY[brand] || []
+  let ids = [...new Set([...prio, ...STORE_ORDER])]
+  if (brand === 'apple') ids = ids.filter((id) => id !== 'market')
+  return ids
+    .filter((id) => STORE_DEFS[id])
+    .map((id, idx) => {
+      const def = STORE_DEFS[id]
+      return { id, name: def.name, url: def.build(kw), recommend: idx === 0 }
+    })
 }
 
 type Platform = 'ios' | 'android' | 'other'
