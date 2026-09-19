@@ -665,8 +665,12 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
         onClose()
         return
       }
+      // 唤起失败：就地提示，不自动跳转，避免浏览器（如 Edge）误拉起应用商店
+      setFailedId(s.id)
+      return
     }
     if (s.web) {
+      // 纯网页版 App（无 scheme）：直接打开网页，无应用商店跳转问题
       window.open(s.web, '_blank')
       onClose()
       return
@@ -732,7 +736,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                 <div className="mt-2 text-2xs text-danger">
                   {s.web ? (
                     <a href={s.web} target="_blank" rel="noreferrer" className="underline" onClick={onClose}>
-                      打开网页版
+                      {/play\.google\.com|apps\.apple\.com/.test(s.web) ? '前往应用商店安装' : '打开网页版'}
                     </a>
                   ) : (
                     '本机似乎未安装或系统拦下了跳转，请在桌面端打开。'
