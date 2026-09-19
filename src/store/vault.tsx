@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   deriveKey,
-  lock as clearKey,
+  lockSession,
+  lockHard,
   persistKey,
   restoreKey,
   setVerifier as cryptoSetVerifier,
@@ -26,6 +27,8 @@ interface VaultState {
   setup: (passphrase: string, remember: boolean) => Promise<boolean>
   lock: () => void
   requestUnlock: () => void
+  /** 解密失败等兜底：彻底清密钥并弹出解锁框要求重输口令 */
+  forceReauth: () => void
   closeUnlock: () => void
   setVerifier: (token: string | null | undefined) => void
 }
@@ -77,12 +80,32 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // 手动加锁（用户点锁图标）：只清内存与会话，保留「记住 30 天」持久密钥。
+  // 之后点解锁会走 requestUnlock 的静默恢复，30 天内无需重输口令。
   const lock = useCallback(() => {
-    clearKey()
+    lockSession()
     setKey(null)
   }, [])
 
-  const requestUnlock = useCallback(() => setUnlockOpen(true), [])
+  // 请求解锁：若「记住 30 天」持久密钥仍有效，静默恢复，不弹解锁框；
+  // 否则打开解锁框。这样手动加锁后再点锁图标可无密码恢复（remember 生效）。
+  const requestUnlock = useCallback(async () => {
+    const k = await restoreKey()
+    if (k) {
+      setKey(k)
+      return
+    }
+    setUnlockOpen(true)
+  }, [])
+
+  // 兜底重认证：彻底清掉本机密钥（含「记住 30 天」持久密钥），弹出解锁框重输口令。
+  // 用于「密钥与校验串不匹配 / 单字段解密失败」等需要换口令的场景。
+  const forceReauth = useCallback(() => {
+    lockHard()
+    setKey(null)
+    setError('')
+    setUnlockOpen(true)
+  }, [])
   const closeUnlock = useCallback(() => {
     setUnlockOpen(false)
     setError('')
@@ -118,12 +141,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     if (!key || verifier === null) return
     let alive = true
     verifyKey(key, verifier).then((ok) => {
-      if (alive && !ok) lock()
+      if (alive && !ok) lockHard()
     })
     return () => {
       alive = false
     }
-  }, [key, verifier, lock])
+  }, [key, verifier, lockHard])
 
   const value = useMemo<VaultState>(
     () => ({
@@ -139,10 +162,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setup,
       lock,
       requestUnlock,
+      forceReauth,
       closeUnlock,
       setVerifier,
     }),
-    [key, ready, verifierResolved, verifier, busy, error, unlockOpen, unlock, setup, lock, requestUnlock, closeUnlock, setVerifier],
+    [key, ready, verifierResolved, verifier, busy, error, unlockOpen, unlock, setup, lock, requestUnlock, forceReauth, closeUnlock, setVerifier],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

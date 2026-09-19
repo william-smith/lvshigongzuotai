@@ -108,13 +108,32 @@ export async function importKeyRaw(raw: string): Promise<CryptoKey> {
   ])
 }
 
-/** remember=true 存 localStorage（30 天），否则只存会话 */
+/** remember=true 存 localStorage（30 天），否则只存会话并清掉旧的持久密钥 */
 export async function persistKey(key: CryptoKey, remember: boolean) {
   const raw = await exportKeyRaw(key)
   sessionStorage.setItem(K_SESSION, raw)
   if (remember) {
     localStorage.setItem(K_PERSIST, JSON.stringify({ raw, exp: Date.now() + PERSIST_DAYS * 864e5 }))
+  } else {
+    // 显式不记住：清掉旧的持久密钥，否则下次手动加锁后仍会被无密码恢复
+    localStorage.removeItem(K_PERSIST)
   }
+}
+
+/**
+ * 手动加锁（用户点锁图标）：仅清内存与会话，保留「记住 30 天」持久密钥。
+ * 之后点解锁会走 requestUnlock 的静默恢复路径，30 天内无需重输口令。
+ */
+export function lockSession() {
+  sessionStorage.removeItem(K_SESSION)
+}
+
+/**
+ * 彻底清除（换设备改密、显式退出）：连持久密钥一起清，下次必须重输口令。
+ */
+export function lockHard() {
+  sessionStorage.removeItem(K_SESSION)
+  localStorage.removeItem(K_PERSIST)
 }
 
 export async function restoreKey(): Promise<CryptoKey | null> {
@@ -142,11 +161,6 @@ export async function restoreKey(): Promise<CryptoKey | null> {
     }
   }
   return null
-}
-
-export function lock() {
-  sessionStorage.removeItem(K_SESSION)
-  localStorage.removeItem(K_PERSIST)
 }
 
 // ---------- 脱敏显示 ----------
