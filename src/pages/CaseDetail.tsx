@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
 import { useSwipeNavigation } from '../lib/gestures'
-import { openCamScanner, ScanFallbackDialog } from '../components/ScanLauncher'
+import { ScanStoreUrl, openScheme } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
 
@@ -87,21 +87,10 @@ export function CaseDetail({
   const d = daysUntil(c.next_due)
   const stage = normalizeStage(c.stage)
 
-  // 移动端拍照按钮：优先唤起扫描全能王，唤不醒再提示安装
-  const [scanFailed, setScanFailed] = useState(false)
-  const [scanBusy, setScanBusy] = useState(false)
   // 桌面顶栏「智能体」入口弹窗
   const [agentOpen, setAgentOpen] = useState(false)
-  const onScanTap = async () => {
-    if (scanBusy) return
-    setScanBusy(true)
-    try {
-      const ok = await openCamScanner()
-      if (!ok) setScanFailed(true)
-    } finally {
-      setScanBusy(false)
-    }
-  }
+  // 移动端相机按钮的「拍照 / 扫描」选择框
+  const [captureOpen, setCaptureOpen] = useState(false)
 
   const tabs: { key: Tab; label: string; n?: number }[] = [
     { key: 'overview', label: '概览' },
@@ -348,19 +337,18 @@ export function CaseDetail({
         </div>
       </div>
 
-      {/* 移动端浮动拍照按钮 */}
+      {/* 移动端浮动拍照按钮：弹出「拍照 / 扫描」选择框 */}
       <button
         type="button"
-        onClick={onScanTap}
-        disabled={scanBusy}
-        title="打开扫描全能王"
-        className="md:hidden fixed right-4 bottom-20 z-30 w-14 h-14 rounded-full bg-brand text-white shadow-pop flex items-center justify-center disabled:opacity-60"
+        onClick={() => setCaptureOpen(true)}
+        title="拍照 / 扫描"
+        className="md:hidden fixed right-4 bottom-20 z-30 w-14 h-14 rounded-full bg-brand text-white shadow-pop flex items-center justify-center"
       >
         <Icon name="camera" className="w-6 h-6" />
       </button>
 
-      <ScanFallbackDialog open={scanFailed} onClose={() => setScanFailed(false)} />
       <AgentSheet open={agentOpen} onClose={() => setAgentOpen(false)} />
+      <CaptureSheet open={captureOpen} onClose={() => setCaptureOpen(false)} />
     </div>
   )
 }
@@ -590,6 +578,209 @@ function AgentSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           >
             <Icon name="plus" className="w-4 h-4" />
             添加智能体
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 移动端相机按钮的「拍照 / 扫描」选择框：
+ * - 预置「系统相机」（直接调起原生相机拍照）与「扫描全能王」。
+ * - 支持「+ 添加扫描 App」登记任意 scheme://（唤起本机 App）或 https://（网页版兜底），存 localStorage，通用不绑本机。
+ * - 系统相机通过 <input capture> 调起，拍完下载到「下载」文件夹，提示用户移入本案 Verysync 同步目录；
+ *   网页无法写入任意本地目录，这一步由用户手动完成（与 CamScanner 流程一致）。
+ */
+type Scanner = { id: string; name: string; desc: string; scheme?: string; web?: string; capture?: boolean }
+
+const PRESET_SCANNERS: Scanner[] = [
+  { id: 'camera', name: '系统相机', desc: '直接用手机相机拍照', capture: true },
+  { id: 'camscanner', name: '扫描全能王', desc: '专业文档扫描 / 自动校正', scheme: 'camscanner://', web: ScanStoreUrl() },
+]
+
+const SCANNER_STORE_KEY = 'lw.scanners'
+
+function readCustomScanners(): Scanner[] {
+  try {
+    const raw = localStorage.getItem(SCANNER_STORE_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+
+function captureWithCamera(onDone: () => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.capture = 'environment'
+  input.onchange = () => {
+    const f = input.files?.[0]
+    if (!f) return
+    const url = URL.createObjectURL(f)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `IMG_${Date.now()}.jpg`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 4000)
+    onDone()
+  }
+  input.click()
+}
+
+function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [custom, setCustom] = useState<Scanner[]>(() => readCustomScanners())
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [failedId, setFailedId] = useState<string | null>(null)
+  const [hint, setHint] = useState<string | null>(null)
+
+  useEffect(() => {
+    setFailedId(null)
+    setAdding(false)
+    setName('')
+    setUrl('')
+    setHint(null)
+  }, [open])
+
+  if (!open) return null
+
+  const all = [...PRESET_SCANNERS, ...custom]
+
+  const launch = async (s: Scanner) => {
+    setFailedId(null)
+    setHint(null)
+    if (s.capture) {
+      captureWithCamera(() => setHint('照片已下载到「下载」文件夹，请移入本案的 Verysync 同步目录'))
+      return
+    }
+    if (s.scheme) {
+      const ok = await openScheme(s.scheme)
+      if (ok) {
+        onClose()
+        return
+      }
+    }
+    if (s.web) {
+      window.open(s.web, '_blank')
+      onClose()
+      return
+    }
+    setFailedId(s.id)
+  }
+
+  const saveCustom = () => {
+    const n = name.trim()
+    const u = url.trim()
+    if (!n || !u) return
+    const isHttp = u.startsWith('http')
+    const next: Scanner[] = [
+      ...custom,
+      { id: 'c_' + Date.now(), name: n, desc: '自定义扫描 App', scheme: isHttp ? undefined : u, web: isHttp ? u : undefined },
+    ]
+    setCustom(next)
+    localStorage.setItem(SCANNER_STORE_KEY, JSON.stringify(next))
+    setName('')
+    setUrl('')
+    setAdding(false)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-pop p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-base font-semibold text-ink">拍照 / 扫描</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center text-ink-2 hover:bg-canvas rounded-lg"
+          >
+            <Icon name="close" className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-xs text-ink-2 mb-4">选择拍照或扫描方式（材料通过 Verysync 同步，无需在此上传）</p>
+
+        <div className="space-y-2">
+          {all.map((s) => (
+            <div key={s.id} className="rounded-xl border border-line p-3">
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center shrink-0">
+                  <Icon name={s.capture ? 'camera' : 'agent'} className="w-4.5 h-4.5" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-ink">{s.name}</div>
+                  <div className="text-2xs text-ink-3 truncate">{s.desc}</div>
+                </div>
+                <button
+                  onClick={() => launch(s)}
+                  className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover shrink-0"
+                >
+                  {s.capture ? '拍照' : '打开'}
+                </button>
+              </div>
+              {failedId === s.id && (
+                <div className="mt-2 text-2xs text-danger">
+                  {s.web ? (
+                    <a href={s.web} target="_blank" rel="noreferrer" className="underline" onClick={onClose}>
+                      打开网页版
+                    </a>
+                  ) : (
+                    '本机似乎未安装或系统拦下了跳转，请在桌面端打开。'
+                  )}
+                </div>
+              )}
+              {hint && s.capture && <div className="mt-2 text-2xs text-ink-3">{hint}</div>}
+            </div>
+          ))}
+        </div>
+
+        {adding ? (
+          <div className="mt-3 rounded-xl border border-line p-3 space-y-2">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="扫描 App 名称"
+              className="w-full h-9 px-3 rounded-lg border border-line text-sm outline-none focus:border-brand"
+            />
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="唤起地址（scheme:// 或 https://）"
+              className="w-full h-9 px-3 rounded-lg border border-line text-sm outline-none focus:border-brand"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setAdding(false)
+                  setName('')
+                  setUrl('')
+                }}
+                className="flex-1 h-9 rounded-lg border border-line text-sm text-ink-2"
+              >
+                取消
+              </button>
+              <button onClick={saveCustom} className="flex-1 h-9 rounded-lg bg-brand text-white text-sm font-medium">
+                保存
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="mt-3 w-full h-9 rounded-lg border border-dashed border-line text-sm text-ink-2 hover:bg-canvas flex items-center justify-center gap-1"
+          >
+            <Icon name="plus" className="w-4 h-4" />
+            添加扫描 App
           </button>
         )}
       </div>

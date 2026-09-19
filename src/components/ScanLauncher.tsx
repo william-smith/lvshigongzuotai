@@ -91,6 +91,12 @@ export async function openCamScanner(): Promise<boolean> {
   return false
 }
 
+/** 通用：尝试用任意 scheme 唤起本机 App，返回是否「看起来跳走了」。供自定义扫描 App 复用。 */
+export async function openScheme(url: string): Promise<boolean> {
+  const platform = detectPlatform()
+  return tryOnce(url, platform, 1200)
+}
+
 export function ScanStoreUrl() {
   return detectPlatform() === 'ios' ? IOS_STORE : ANDROID_STORE
 }
