@@ -17,67 +17,22 @@ import { Icon } from './Icon'
 export type AppStore = { id: string; name: string; url: string; recommend?: boolean }
 
 /**
- * 各应用市场入口。**刻意不绑死 Google Play**——国内机器多是华为 / 荣耀 / 小米 / OPPO / vivo
- * 自带市场，装没装 Play 都不一定。规则：
- * - 能确定搜索深链的（苹果 App Store、Google Play）直接带关键词搜索；
- * - 其余厂商网页端没有公开稳定的搜索深链（多为 SPA hash 路由，改版即失效），
- *   只给官网首页，宁可让用户进市场里搜一次，也不给打不开的链接；
- * - Android 另给 `market://search?q=`：交给**本机默认应用市场**接管的通用方案，
- *   华为 / 荣耀 / 小米 / OPPO / vivo 都会响应，不依赖任何具体商店。
+ * 未安装时的应用市场兜底：**只给一个入口**（界面从简）。
+ * - Android：`market://search?q=` 交给**本机默认应用市场**——华为 / 荣耀 / 小米 / OPPO / vivo
+ *   系统市场都会响应 market://，无需逐家列举（厂商网页端也没有公开稳定的搜索深链）；
+ * - iOS：App Store 关键词搜索；
+ * - 桌面端：不列市场入口（拍照/扫描按钮本就只在移动端出现）。
  */
-const STORE_DEFS: Record<string, { name: string; build: (kw: string) => string }> = {
-  apple: { name: 'App Store', build: (kw) => `https://apps.apple.com/cn/search?term=${kw}` },
-  market: { name: '本机应用市场', build: (kw) => `market://search?q=${kw}` },
-  huawei: { name: '华为应用市场', build: () => 'https://appgallery.huawei.com/' },
-  honor: { name: '荣耀应用市场', build: () => 'https://www.honor.com/cn/tech/honor-app-market/' },
-  xiaomi: { name: '小米应用商店', build: () => 'https://app.mi.com/' },
-  oppo: { name: 'OPPO 软件商店', build: () => 'https://store.oppomobile.com/' },
-  vivo: { name: 'vivo 应用商店', build: () => 'https://app.vivo.com.cn/' },
-  google: { name: 'Google Play', build: (kw) => `https://play.google.com/store/search?q=${kw}&c=apps` },
-  yyb: { name: '应用宝', build: () => 'https://sj.qq.com/' },
-}
-
-/** 粗略识别手机品牌，只用来把最可能的市场排在最前，不据此屏蔽其它市场 */
-export function detectBrand(): string {
-  const ua = navigator.userAgent || ''
-  if (/iPad|iPhone|iPod/.test(ua)) return 'apple'
-  if (/HarmonyOS|HUAWEI|Huawei/i.test(ua)) return 'huawei'
-  if (/HONOR|Honor/i.test(ua)) return 'honor'
-  if (/Xiaomi|Redmi|POCO/i.test(ua)) return 'xiaomi'
-  if (/OPPO|realme/i.test(ua)) return 'oppo'
-  if (/vivo/i.test(ua)) return 'vivo'
-  if (/Android/i.test(ua)) return 'android'
-  return 'other'
-}
-
-/** 全部市场入口，按固定基础顺序展示；品牌识别只决定谁排最前 */
-const STORE_ORDER = ['apple', 'market', 'huawei', 'honor', 'xiaomi', 'oppo', 'vivo', 'yyb', 'google']
-
-/** 品牌 → 应排最前的市场（只影响排序，不裁剪列表；保证任何机器都能看到全部市场） */
-const BRAND_PRIORITY: Record<string, string[]> = {
-  apple: ['apple'],
-  huawei: ['market', 'huawei'],
-  honor: ['market', 'honor'],
-  xiaomi: ['market', 'xiaomi'],
-  oppo: ['market', 'oppo'],
-  vivo: ['market', 'vivo'],
-  android: ['market'],
-  other: [],
-}
-
-/** 应用市场完整列表（品牌猜测的排最前并标 recommend）。iOS 上剔除 market://（无意义）。 */
 export function appStores(keyword: string): AppStore[] {
   const kw = encodeURIComponent(keyword || '')
-  const brand = detectBrand()
-  const prio = BRAND_PRIORITY[brand] || []
-  let ids = [...new Set([...prio, ...STORE_ORDER])]
-  if (brand === 'apple') ids = ids.filter((id) => id !== 'market')
-  return ids
-    .filter((id) => STORE_DEFS[id])
-    .map((id, idx) => {
-      const def = STORE_DEFS[id]
-      return { id, name: def.name, url: def.build(kw), recommend: idx === 0 }
-    })
+  const platform = detectPlatform()
+  if (platform === 'ios') {
+    return [{ id: 'apple', name: 'App Store', url: `https://apps.apple.com/cn/search?term=${kw}`, recommend: true }]
+  }
+  if (platform === 'android') {
+    return [{ id: 'market', name: '本机应用市场', url: `market://search?q=${kw}`, recommend: true }]
+  }
+  return []
 }
 
 type Platform = 'ios' | 'android' | 'other'

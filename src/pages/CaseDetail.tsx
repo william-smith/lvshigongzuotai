@@ -755,9 +755,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                     </a>
                   ) : (
                     <>
-                      <div className="text-2xs text-danger">
-                        没能唤起{s.name}，可能未安装或被系统拦下。可在应用市场搜索「{s.keyword || s.name}」安装：
-                      </div>
+                      <div className="text-2xs text-danger">没能唤起{s.name}，可能未安装或被系统拦下。</div>
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {appStores(s.keyword || s.name).map((st) => (
                           <a
@@ -765,16 +763,11 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                             href={st.url}
                             target="_blank"
                             rel="noreferrer"
-                            className={`px-2 py-1 rounded-md border text-2xs hover:bg-canvas ${
-                              st.recommend ? 'border-brand text-brand' : 'border-line text-ink-2'
-                            }`}
+                            className="px-2 py-1 rounded-md border border-brand text-brand text-2xs hover:bg-canvas"
                           >
-                            {st.name}
+                            去{st.name}安装
                           </a>
                         ))}
-                      </div>
-                      <div className="mt-1 text-2xs text-ink-3">
-                        部分厂商市场没有公开的搜索链接，打开后请在市场内搜索上面的关键词。
                       </div>
                     </>
                   )}
