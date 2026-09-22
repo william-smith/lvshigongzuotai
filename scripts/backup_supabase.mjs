@@ -234,7 +234,10 @@ const nowStamp = () => {
 
 const dryRun = hasFlag('dry-run')
 const verifyDir = arg('verify')
-const outRoot = arg('to') || join(repoRoot, 'backups')
+// 输出根目录优先级：--to > .env.local 的 BACKUP_TO > 环境变量 > 仓库内 backups/
+// 想做异地冗余就把 BACKUP_TO 指到 Verysync / NAS 的同步目录（一次性配好在 .env.local）
+const outRoot =
+  arg('to') || readDotEnv('BACKUP_TO') || process.env.BACKUP_TO || join(repoRoot, 'backups')
 
 /** --verify：校验已有快照的 SHA-256 与行数，确认没被改坏 */
 if (verifyDir) {

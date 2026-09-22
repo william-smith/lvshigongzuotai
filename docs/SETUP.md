@@ -291,9 +291,12 @@ PWA 实现的几个关键点：
 ```ini
 SUPABASE_SERVICE_ROLE=eyJhbGciOi...
 BACKUP_KEEP=30
+# 可选：想把快照直接落到 NAS / Verysync 同步目录做异地冗余，就填这一行
+BACKUP_TO=D:\Documents\法法\同步\律师工作台备份
 ```
 
 > 只让本机脚本读它，前端永远拿不到——这也是不写进 `.env` 的原因（`.env` 会被 Vite 认领）。
+> 两项都配好后，`npm run backup` 无需任何参数即可完成备份。
 
 ### 9.2 手动备份
 
