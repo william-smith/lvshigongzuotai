@@ -141,7 +141,7 @@ lawyer-workbench/
 
 ⚠️ **VITE_API_KEY 必须是 anon 角色**——不是 service_role！后者拥有完全数据库权限。
 
-⚠️ **定期备份**——虽然云数据库自带每日快照，每周手动导一份全表 JSON 落本地加密盘。
+⚠️ **定期备份**——自带脚本可导出全表 JSON 快照（含校验和与保留策略）：`npm run backup`，恢复用 `npm run restore --from <快照目录>`。详见 [SETUP.md §9](./docs/SETUP.md#9-数据备份与恢复)。
 
 ---
 

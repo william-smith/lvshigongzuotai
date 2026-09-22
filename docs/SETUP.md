@@ -19,7 +19,8 @@ README 写的是「这是什么、能干什么」；本文写的是「选平台 
 - 6. 部署静态站点
 - 7. PWA 安装
 - 8. 添加第一个案件
-- 9. 常见问题
+- 9. 数据备份与恢复
+- 10. 常见问题
 
 ---
 
@@ -273,7 +274,89 @@ PWA 实现的几个关键点：
 
 ---
 
-## 9. 常见问题
+## 9. 数据备份与恢复
+
+云数据库不会替你兜底：免费版 Supabase **没有**每日备份（付费版才有），而误删、改错、
+领导的 windows 被盗等情况并不要等到付费才发生。所以本仓库自带一套纯 REST 的快照脚本，
+零第三方依赖、换平台照样能用。
+
+### 9.1 先配一次密钥
+
+数据是按 RLS 保护的，**anon key 一条业务数据都读不到**，导出会全空。
+所以要给本机的备份脚本一个 service_role key：
+
+1. 控制台 → Project Settings → API → 复制 `service_role` 那一条 JWT
+2. 写到仓库根目录的 `.env.local`（**已被 .gitignore 忽略**，且它没有 `VITE_` 前缀，不会打进前端产物）：
+
+```ini
+SUPABASE_SERVICE_ROLE=eyJhbGciOi...
+BACKUP_KEEP=30
+```
+
+> 只让本机脚本读它，前端永远拿不到——这也是不写进 `.env` 的原因（`.env` 会被 Vite 认领）。
+
+### 9.2 手动备份
+
+```bash
+npm run backup          # 全量快照 → backups/<YYYYMMDD_HHMM>/
+npm run backup:dry      # 只报各表行数，不落盘（先看数据对不对）
+node scripts/backup_supabase.mjs --verify backups/20260923_0030   # 校验快照是否完好
+```
+
+导出内容：
+
+| 文件 | 说明 |
+| --- | --- |
+| `<table>.json` | 每表一个 JSON 数组，字段原样，加密字段保持密文 |
+| `_auth_users.json` | 登录账号清单（不含密码哈希 / MFA 凭据） |
+| `_manifest.json` | 每张表的行数、字节数、SHA-256——**校验与恢复都依赖它** |
+
+表名会**自动从 PostgREST 的 OpenAPI 接口发现**，以后加表不用改脚本；
+拿不到时才退回 `schema.sql` 的固定清单。默认保留最近 30 份（`BACKUP_KEEP`），多的自动清理。
+
+### 9.3 定时备份（二选一）
+
+**Windows 计划任务**（脱离WorkBuddy也能跑，推荐）：
+
+```bat
+schtasks /create /tn "律师工作台-数据备份" /tr "cmd /c cd /d D:\Documents\workbuddy\lawyer-workbench && set SUPABASE_SERVICE_ROLE=eyJ... && node scripts\backup_supabase.mjs"
+         /sc daily /st 03:00
+```
+
+**WorkBuddy 定时自动化**：建一个每天执行 `npm run backup` 并汇报行数的定时任务即可，
+适合你希望每天在对话里看到「今天备份了 N 行」的场景。
+
+### 9.4 恢复
+
+恢复是写操作，**强制两步**：先 `--dry-run` 预演，再 `--yes` 执行。
+
+```bash
+node scripts/restore_supabase.mjs --from backups/20260923_0030 --dry-run
+node scripts/restore_supabase.mjs --from backups/20260923_0030 --yes
+node scripts/restore_supabase.mjs --from <dir> --tables cases,timeline --yes   # 只恢复几张表
+```
+
+- 默认是 **UPSERT 合并**（`on_conflict=id`）：缺失的补回来，已存在的用快照覆盖；
+  库里多出来的新数据**不会**被删——这是大多数误删场景想要的。
+- `--replace` 会先清空该表再灌入（外键均已 cascade，按父表优先顺序删），**谨慎使用**。
+- 执行前会逐表比对 SHA-256，快照被动过就拒绝恢复。
+
+### 9.5 几条存放建议
+
+- **异地存放**：把 `--to` 指到 Verysync / NAS 的同步目录，本机和 NAS 各一份；快照里是真实当事人信息，**不要**丢进任何公开仓库、网盘分享或聊天附件。
+- **再加一道保险**：如果买了 Supabase Pro，把官方每日备份 / PITR 也打开，两条链路互不替代。
+- **要含表结构的话**：用 `pg_dump`（ migrations 仅供参考）：
+  `pg_dump "postgresql://postgres:<pwd>@db.<ref>.supabase.co:5432/postgres" -Fc -f supabase.dump`
+
+### 9.6 网络不通怎么办
+
+脚本若所有表都报 `fetch failed`，通常是**出网要走代理**——Node 的 fetch 默认不读 `HTTPS_PROXY`。
+`scripts/net-proxy.mjs` 会自动兜底：直连失败就带 `NODE_USE_ENV_PROXY=1` 重启一次。
+确认你的代理在跑（如 V2rayN 的 10808），并让环境变量可见即可，无需改代码。
+
+---
+
+## 10. 常见问题
 
 ### Q: 忘了主口令怎么办？
 A: 没有「找回」按钮。用**老口令**才能解密已存的敏感字段，新口令可以重设但旧数据开不了。

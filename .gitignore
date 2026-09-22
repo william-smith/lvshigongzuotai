@@ -16,6 +16,9 @@ _server*.log
 cp.log
 fetch_prev.log
 
+# 数据库快照备份：含真实案件数据，绝对不能提交
+backups/
+
 # 临时产物
 *.timestamp-*.mjs
 _online_index.html

@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --host",
     "check:api": "node scripts/check-api.mjs",
-    "sync:site": "node scripts/sync-site.mjs"
+    "sync:site": "node scripts/sync-site.mjs",
+    "backup": "node scripts/backup_supabase.mjs",
+    "backup:dry": "node scripts/backup_supabase.mjs --dry-run",
+    "restore": "node scripts/restore_supabase.mjs"
   },
   "dependencies": {
     "lawyer-workbench": "file:",
