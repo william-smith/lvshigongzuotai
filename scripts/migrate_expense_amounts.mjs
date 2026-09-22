@@ -153,6 +153,57 @@ if (!verifier) {
 
 const key = await deriveKey(pass)
 
+/**
+ * --verify：用当前口令解开全部金额密文，并与明文列比对。
+ * 只打印「一致 / 不一致 / 解不开」的条数，不打印金额，避免日志里留下真实数额。
+ * 写入前后各跑一次：写入前看存量密文是不是同一把钥匙，写入后确认全部可解。
+ */
+if (hasFlag('verify')) {
+  const all = await sql('select id, amount, personal, amount_enc, personal_enc from public.expenses order by id')
+  let okA = 0
+  let badA = 0
+  let okP = 0
+  let badP = 0
+  let emptyA = 0
+  let emptyP = 0
+  const problems = []
+  const chk = async (enc, plain) => {
+    if (!enc) return 'empty'
+    try {
+      const s = await decryptString(key, enc)
+      const n = Number(s)
+      if (!Number.isFinite(n)) return 'bad'
+      if (plain === null || plain === undefined) return 'ok' // 明文已清空，能解开就算过
+      return Math.abs(n - Number(plain)) < 0.005 ? 'ok' : 'bad'
+    } catch {
+      return 'bad'
+    }
+  }
+  for (const r of all) {
+    const a = await chk(r.amount_enc, r.amount)
+    const p = await chk(r.personal_enc, r.personal)
+    if (a === 'ok') okA++
+    else if (a === 'bad') {
+      badA++
+      problems.push(`id=${r.id} amount 解不开或与明文不符`)
+    } else emptyA++
+    if (p === 'ok') okP++
+    else if (p === 'bad') {
+      badP++
+      problems.push(`id=${r.id} personal 解不开或与明文不符`)
+    } else emptyP++
+  }
+  console.log(`   开票金额：可解且一致 ${okA} 条，异常 ${badA} 条，无密文 ${emptyA} 条`)
+  console.log(`   个人得  ：可解且一致 ${okP} 条，异常 ${badP} 条，无密文 ${emptyP} 条`)
+  for (const p of problems) console.log(`   ✗ ${p}`)
+  if (badA || badP) {
+    err('校验未通过：存在解不开或不符的金额，不要急着清空明文列')
+    process.exit(1)
+  }
+  ok('校验通过：所有已加密金额都能被当前口令解开')
+  process.exit(0)
+}
+
 /* 2. 取数据 */
 const rows = await sql(
   'select id, amount, personal, amount_enc, personal_enc from public.expenses order by id'
@@ -168,8 +219,10 @@ for (const r of rows) {
   const p = needPersonal ? await encryptString(key, String(r.personal)) : null
   todo.push({ id: r.id, needAmount, needPersonal, a, p })
   // 金额明文不打印，只显示密文长度，避免日志里留下真实数额
-  const showA = needAmount ? `明文金额 → 密文(${a.length} 字符)` : '（已有密文，跳过）'
-  const showP = needPersonal ? `明文金额 → 密文(${p.length} 字符)` : '（已有密文，跳过）'
+  const whyA = needAmount ? `明文金额 → 密文(${a.length} 字符)` : r.amount == null ? '（无金额，跳过）' : '（已有密文，跳过）'
+  const whyP = needPersonal ? `明文金额 → 密文(${p.length} 字符)` : r.personal == null ? '（无金额，跳过）' : '（已有密文，跳过）'
+  const showA = whyA
+  const showP = whyP
   console.log(`   id=${String(r.id).padEnd(6)} amount: ${showA}   personal: ${showP}`)
 }
 

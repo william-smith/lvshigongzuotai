@@ -21,4 +21,6 @@ comment on column public.expenses.personal_enc is '个人得金额密文 v1:iv:c
 -- 清空明文金额。执行后前端务必设置 VITE_EXPENSE_ENC_ONLY=1 重新构建，
 -- 否则前端会把金额明文又写回来。
 -- ------------------------------------------------------------
--- update public.expenses set amount = null, personal = null where amount_enc is not null or personal_enc is not null;
+-- 按字段各自判断，避免把「没有密文的那一项」误清掉：
+-- update public.expenses set amount = null where amount_enc is not null;
+-- update public.expenses set personal = null where personal_enc is not null;
