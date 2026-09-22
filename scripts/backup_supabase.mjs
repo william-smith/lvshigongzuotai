@@ -51,6 +51,57 @@ function hasFlag(name) {
   return process.argv.includes(`--${name}`)
 }
 
+const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
+
+/**
+ * --verify：纯离线校验已有快照的 SHA-256 与行数，确认没被改坏。
+ * 刻意放在所有联网/凭据逻辑之前——校验一份备份不该依赖数据库连得上。
+ */
+const verifyDir = arg('verify')
+if (verifyDir) {
+  const dir = resolve(process.cwd(), verifyDir)
+  if (!existsSync(dir)) {
+    err(`目录不存在：${dir}`)
+    process.exit(1)
+  }
+  const manFile = join(dir, '_manifest.json')
+  if (!existsSync(manFile)) {
+    err(`缺少 _manifest.json：${dir}（这可能是导出到一半失败留下的残缺快照）`)
+    process.exit(1)
+  }
+  const man = JSON.parse(readFileSync(manFile, 'utf8'))
+  let bad = 0
+  for (const t of man.tables) {
+    const p = join(dir, `${t.table}.json`)
+    if (!existsSync(p)) {
+      err(`${t.table}.json 缺失`)
+      bad++
+      continue
+    }
+    const txt = readFileSync(p, 'utf8')
+    const hash = sha256(txt)
+    const rows = JSON.parse(txt).length
+    if (hash !== t.sha256) {
+      err(`${t.table}: 校验和不符（文件可能被改过或已损坏）`)
+      bad++
+    } else if (rows !== t.rows) {
+      err(`${t.table}: 行数不符 清单 ${t.rows} / 实际 ${rows}`)
+      bad++
+    } else {
+      ok(`${t.table.padEnd(14)} ${String(rows).padStart(6)} 行  ✓ 完整`)
+    }
+  }
+  const rowsTotal = man.tables.reduce((s, t) => s + t.rows, 0)
+  const bytesTotal = man.tables.reduce((s, t) => s + t.bytes, 0)
+  if (bad) {
+    err(`校验失败：${bad} 张表有问题，这份快照不可用于恢复`)
+    process.exit(1)
+  }
+  ok(`快照完整：${dir}`)
+  console.log(`   ${man.tables.length} 张表 / ${rowsTotal} 行 / ${(bytesTotal / 1024).toFixed(1)} KB   导出于 ${man.exported_at}`)
+  process.exit(0)
+}
+
 /** 读 .env / .env.local，返回键值（不会泄漏到子进程环境之外的输出里） */
 function readDotEnv(name) {
   for (const f of ['.env.local', '.env']) {
@@ -99,16 +150,17 @@ async function fetchServiceRoleViaMgmt(token) {
   return found.api_key
 }
 
+// Management token：既可以用来换 service_role，也可以在 REST 不通时直接执行 SQL 取数
+const mgmtToken =
+  arg('token') || process.env.SUPABASE_ACCESS_TOKEN || readDotEnv('SUPABASE_ACCESS_TOKEN') || ''
+
 let keyRole = 'service_role'
 let serviceKey =
   arg('service-role') || process.env.SUPABASE_SERVICE_ROLE || readDotEnv('SUPABASE_SERVICE_ROLE') || ''
 
-if (!serviceKey) {
-  const token = arg('token') || process.env.SUPABASE_ACCESS_TOKEN || readDotEnv('SUPABASE_ACCESS_TOKEN')
-  if (token) {
-    step('用 Management token 换 service_role（仅本次内存使用，不落盘）')
-    serviceKey = await fetchServiceRoleViaMgmt(token)
-  }
+if (!serviceKey && mgmtToken) {
+  step('用 Management token 换 service_role（仅本次内存使用，不落盘）')
+  serviceKey = await fetchServiceRoleViaMgmt(mgmtToken)
 }
 
 let headers
@@ -120,9 +172,89 @@ if (serviceKey) {
   keyRole = 'anon（受限）'
 }
 
+/**
+ * 服务端执行 SQL（Supabase Management API）。
+ * 用途：REST 端点被网络挡住时的备用取数通道；Management token 是账户级权限，不受 RLS 限制。
+ * 注意：成功状态码可能是 200 也可能是 201（该接口的实际行为）。
+ */
+async function mgmtSql(sql) {
+  const res = await fetch(`https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${mgmtToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: sql }),
+  })
+  const text = await res.text()
+  if (res.status !== 200 && res.status !== 201) {
+    throw new Error(`Management SQL ${res.status}: ${text.slice(0, 200)}`)
+  }
+  return JSON.parse(text)
+}
+
+async function discoverTablesMgmt() {
+  const rows = await mgmtSql(
+    "select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE' order by table_name"
+  )
+  const names = rows.map((r) => r.table_name).filter(Boolean)
+  return names.length ? names : null
+}
+
+async function fetchTableMgmt(table) {
+  const cnt = await mgmtSql(`select count(*)::int as n from public.${table}`)
+  const total = cnt[0]?.n ?? 0
+  const rows = []
+  const PAGE = 1000
+  for (let offset = 0; offset < Math.max(total, 1); offset += PAGE) {
+    const part = await mgmtSql(
+      `select coalesce(json_agg(x), '[]'::json) as data from (select * from public.${table} order by ctid limit ${PAGE} offset ${offset}) x`
+    )
+    const arr = part[0]?.data || []
+    rows.push(...arr)
+    if (arr.length < PAGE) break
+  }
+  return { rows, total }
+}
+
+/* ---------------- 2.5 通道选择：REST 优先，不通就降级到 Management SQL ---------------- */
+
+async function probeRest() {
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 10000)
+    const res = await fetch(BASE, { headers, signal: ctrl.signal })
+    clearTimeout(timer)
+    return res.status < 500
+  } catch {
+    return false
+  }
+}
+
+const viaArg = arg('via')
+let transport = 'rest'
+if (viaArg === 'mgmt') {
+  transport = 'mgmt'
+} else if (viaArg === 'rest') {
+  transport = 'rest'
+} else {
+  const reachable = await probeRest()
+  if (!reachable && mgmtToken) {
+    transport = 'mgmt'
+    warn(`REST 端点连不上（可能被网络/代理挡了），改用 Management SQL 通道取数`)
+  } else if (!reachable) {
+    warn('REST 端点连不上，且没有 Management token 可降级——导出很可能失败')
+  }
+}
+
 /* ---------------- 2. 自动发现表 ---------------- */
 
 async function discoverTables() {
+  if (transport === 'mgmt') {
+    try {
+      return await discoverTablesMgmt()
+    } catch (e) {
+      warn(`Management SQL 发现表失败：${String(e.message).slice(0, 120)}`)
+      return null
+    }
+  }
   try {
     const res = await fetch(BASE, { headers: { ...headers, Accept: 'application/openapi+json' } })
     if (!res.ok) return null
@@ -197,33 +329,43 @@ async function fetchTable(table) {
   return { rows, total: total ?? rows.length }
 }
 
-/** 登录账号清单（仅 service_role 可用；Supabase 自托管才有的 auth 端点） */
-async function fetchAuthUsers() {
-  if (keyRole !== 'service_role') return null
-  const root = BASE.replace(/\/rest\/v1$/, '')
-  if (!/\.supabase\.co$/i.test(new URL(root).host)) return null
-  const users = []
-  for (let page = 1; page <= 50; page++) {
-    const res = await fetch(`${root}/auth/v1/admin/users?page=${page}&per_page=200`, { headers })
-    if (!res.ok) return page === 1 ? null : users
-    const data = await res.json()
-    const arr = Array.isArray(data) ? data : data.users || []
-    const clean = arr.map((u) => ({
-      id: u.id,
-      email: u.email,
-      phone: u.phone ?? null,
-      created_at: u.created_at,
-      last_sign_in_at: u.last_sign_in_at ?? null,
-      email_confirmed_at: u.email_confirmed_at ?? null,
-      // 刻意不导出 password_hash / mfa / recovery_token：备份不需要凭据材料
-    }))
-    users.push(...clean)
-    if (arr.length < 200) break
-  }
-  return users
+/** 按通道分发：REST（默认）或 Management SQL（降级） */
+async function fetchAnyTable(table) {
+  return transport === 'mgmt' ? fetchTableMgmt(table) : fetchTable(table)
 }
 
-const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
+/** 登录账号清单（仅 service_role 可用；Supabase 自托管才有的 auth 端点） */
+async function fetchAuthUsers() {
+  // REST 通道 + service_role 才有 Supabase Auth 管理端点；走 Management SQL 降级时直接跳过
+  if (transport !== 'rest' || keyRole !== 'service_role') return null
+  const root = BASE.replace(/\/rest\/v1$/, '')
+  try {
+    if (!/\.supabase\.co$/i.test(new URL(root).host)) return null
+    const users = []
+    for (let page = 1; page <= 50; page++) {
+      const res = await fetch(`${root}/auth/v1/admin/users?page=${page}&per_page=200`, { headers })
+      if (!res.ok) return page === 1 ? null : users
+      const data = await res.json()
+      const arr = Array.isArray(data) ? data : data.users || []
+      const clean = arr.map((u) => ({
+        id: u.id,
+        email: u.email,
+        phone: u.phone ?? null,
+        created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at ?? null,
+        email_confirmed_at: u.email_confirmed_at ?? null,
+        // 刻意不导出 password_hash / mfa / recovery_token：备份不需要凭据材料
+      }))
+      users.push(...clean)
+      if (arr.length < 200) break
+    }
+    return users
+  } catch {
+    // auth 端点不通不该让整份快照功亏一篑——表数据才是主体
+    return null
+  }
+}
+
 const nowStamp = () => {
   const d = new Date()
   const p = (n) => String(n).padStart(2, '0')
@@ -233,48 +375,11 @@ const nowStamp = () => {
 /* ---------------- 4. 主流程 ---------------- */
 
 const dryRun = hasFlag('dry-run')
-const verifyDir = arg('verify')
 // 输出根目录优先级：--to > .env.local 的 BACKUP_TO > 环境变量 > 仓库内 backups/
 // 想做异地冗余就把 BACKUP_TO 指到 Verysync / NAS 的同步目录（一次性配好在 .env.local）
 const outRoot =
   arg('to') || readDotEnv('BACKUP_TO') || process.env.BACKUP_TO || join(repoRoot, 'backups')
 
-/** --verify：校验已有快照的 SHA-256 与行数，确认没被改坏 */
-if (verifyDir) {
-  const dir = resolve(process.cwd(), verifyDir)
-  if (!existsSync(dir)) {
-    err(`目录不存在：${dir}`)
-    process.exit(1)
-  }
-  const man = JSON.parse(readFileSync(join(dir, '_manifest.json'), 'utf8'))
-  let bad = 0
-  for (const t of man.tables) {
-    const p = join(dir, `${t.table}.json`)
-    if (!existsSync(p)) {
-      err(`${t.table}.json 缺失`)
-      bad++
-      continue
-    }
-    const txt = readFileSync(p, 'utf8')
-    const hash = sha256(txt)
-    const rows = JSON.parse(txt).length
-    if (hash !== t.sha256) {
-      err(`${t.table}: 校验和不符（可能损坏）`)
-      bad++
-    } else if (rows !== t.rows) {
-      err(`${t.table}: 行数不符 清单 ${t.rows} / 实际 ${rows}`)
-      bad++
-    } else {
-      ok(`${t.table.padEnd(14)} ${String(rows).padStart(6)} 行  ✓ 完整`)
-    }
-  }
-  if (bad) {
-    err(`校验失败：${bad} 张表有问题`)
-    process.exit(1)
-  }
-  ok(`快照完整：${dir}（共 ${man.tables.length} 张表）`)
-  process.exit(0)
-}
 
 step(`项目 ${PROJECT_REF}  身份 ${keyRole}`)
 step(`待导出表：${tables.join(', ')}`)
@@ -284,7 +389,7 @@ if (dryRun) {
   let totalRows = 0
   for (const t of tables) {
     try {
-      const { rows, total } = await fetchTable(t)
+      const { rows, total } = await fetchAnyTable(t)
       totalRows += rows.length
       console.log(`   ${t.padEnd(16)} ${String(rows.length).padStart(6)} 行 ${C.dim}(服务端计数 ${total})${C.x}`)
     } catch (e) {
@@ -310,7 +415,7 @@ const manifest = {
 let failed = 0
 for (const t of tables) {
   try {
-    const { rows } = await fetchTable(t)
+    const { rows } = await fetchAnyTable(t)
     const txt = JSON.stringify(rows, null, 2)
     writeFileSync(join(snapDir, `${t}.json`), txt, 'utf8')
     manifest.tables.push({

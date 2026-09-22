@@ -351,11 +351,35 @@ node scripts/restore_supabase.mjs --from <dir> --tables cases,timeline --yes   #
 - **要含表结构的话**：用 `pg_dump`（ migrations 仅供参考）：
   `pg_dump "postgresql://postgres:<pwd>@db.<ref>.supabase.co:5432/postgres" -Fc -f supabase.dump`
 
-### 9.6 网络不通怎么办
+### 9.6 两条取数通道，REST 不通会自动降级
 
-脚本若所有表都报 `fetch failed`，通常是**出网要走代理**——Node 的 fetch 默认不读 `HTTPS_PROXY`。
-`scripts/net-proxy.mjs` 会自动兜底：直连失败就带 `NODE_USE_ENV_PROXY=1` 重启一次。
-确认你的代理在跑（如 V2rayN 的 10808），并让环境变量可见即可，无需改代码。
+| 通道 | 依赖 | 说明 |
+| --- | --- | --- |
+| **REST**（默认） | anon/service_role + 项目域名可达 | 正常情况首选，还能顺带导出登录账号清单 |
+| **Management SQL** | `--token sbp_xxx` 或 `SUPABASE_ACCESS_TOKEN` | 在 Supabase 服务端执行 SQL 取数，**绕开项目域名**；REST 被网络/代理挡住时自动切过去，`--via rest/mgmt` 可强制指定 |
+
+自动降级的判断是「能不能连上项目 REST 根地址」，连不上且有 token 就走 SQL 通道。
+在上面那种环境里，表名同样通过 `information_schema.tables` 自动发现，行数由 `count(*)` 复核。
+
+> **恢复脚本目前只走 REST**（写操作，保守起见），所以需要项目域名可达。
+> 真的遇到 REST 长期不通又必须恢复时，把 `_manifest.json` 对应的 `<table>.json` 交给 `psql` 或
+> 控制台 SQL Editor 导入即可——这也是保留通用 JSON 格式的意义。
+
+### 9.7 网络不通怎么办
+
+脚本若所有表都报 `fetch failed`，通常是两个原因之一：
+
+1. **出网要走代理**——Node 的 fetch 默认不读 `HTTPS_PROXY`。`scripts/net-proxy.mjs` 会兜底：
+   直连失败就带 `NODE_USE_ENV_PROXY=1` 重启一次。确认代理在跑即可，无需改代码。
+2. **项目域名本身不可达**（某些网络会重置到 `*.supabase.co` 的 TLS 连接），
+   而 `api.supabase.com` 反而通——此时给脚本传 Management token，它会自动切到 SQL 通道。
+
+自查命令：
+
+```bash
+node scripts/diag_net.mjs            # 自动从 .env 取 ref：DNS → TLS → HTTP 逐层报结果
+node scripts/diag_net.mjs <ref>      # 或手动指定项目 ref
+```
 
 ---
 
