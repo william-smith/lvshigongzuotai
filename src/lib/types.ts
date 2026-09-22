@@ -42,6 +42,11 @@ export interface TimelineRow {
  *   收支 → direction   分类 → category   时间 → at
  *   开票金额 → amount   个人得金额 → personal   费用详情 → detail(+detail_enc)
  * 委托人一列不入库：费用挂在案件下，委托人即案件当事人。
+ *
+ * 金额加密（2026-09-23 起）：
+ *   amount_enc / personal_enc ← 金额的 AES-256-GCM 密文（v1:iv:ct），与 detail_enc 同一套密钥。
+ *   灰度期 amount / personal 明文列仍在（便于回滚与核对），确认无误后由迁移脚本统一清空，
+ *   之后把 .env 的 VITE_EXPENSE_ENC_ONLY 置 1，前端就只写密文、不再回写明文字段。
  */
 export interface ExpenseRow {
   id: number
@@ -53,6 +58,8 @@ export interface ExpenseRow {
   personal?: number | null
   detail?: string | null
   detail_enc?: string | null
+  amount_enc?: string | null
+  personal_enc?: string | null
 }
 
 export interface MaterialRow {

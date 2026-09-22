@@ -68,6 +68,8 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
 
   const hasOriginalEnc = Boolean(initial?.detail_enc)
   const lockedWithSecret = hasOriginalEnc && !key
+  /** 金额已加密且当前未解锁：看不到明文，输入框禁用，保存时原样保留不动 */
+  const amountLocked = Boolean(initial?.amount_enc || initial?.personal_enc) && !key
 
   // 解锁后把「摘要」换成解密原文
   useEffect(() => {
@@ -155,6 +157,9 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
         detail: trimmedDetail || null,
         detailChanged,
         originalEnc: initial?.detail_enc ?? null,
+        // 金额原密文：未解锁时用它原样保留，避免被覆盖成 null
+        originalAmountEnc: initial?.amount_enc ?? null,
+        originalPersonalEnc: initial?.personal_enc ?? null,
       }
       const { row, isNew } = await saveExpense(draft, key)
       onSaved(row, isNew)
@@ -294,30 +299,49 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
               {/* 开票金额 + 个人得金额（字段名严格对齐 NocoDB「次1费用详情表」） */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <div className="text-xs text-ink-2 font-medium mb-1.5">开票金额（元）</div>
+                  <div className="flex items-baseline gap-1.5 mb-1.5">
+                    <span className="text-xs text-ink-2 font-medium">开票金额（元）</span>
+                    <span className="text-2xs text-ink-3">{key ? '保存时加密上传' : '未解锁 · 金额保持原值'}</span>
+                  </div>
                   <input
                     type="number"
                     step="0.01"
                     inputMode="decimal"
-                    value={form.amount}
+                    value={amountLocked ? '' : form.amount}
                     onChange={set('amount')}
-                    placeholder="0.00"
-                    className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums"
+                    disabled={amountLocked}
+                    placeholder={amountLocked ? '已加密' : '0.00'}
+                    className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums disabled:opacity-60"
                   />
                 </div>
                 <div>
-                  <div className="text-xs text-ink-2 font-medium mb-1.5">个人得金额（元）</div>
+                  <div className="flex items-baseline gap-1.5 mb-1.5">
+                    <span className="text-xs text-ink-2 font-medium">个人得金额（元）</span>
+                    <span className="text-2xs text-ink-3">{key ? '保存时加密上传' : '未解锁 · 金额保持原值'}</span>
+                  </div>
                   <input
                     type="number"
                     step="0.01"
                     inputMode="decimal"
-                    value={form.personal}
+                    value={amountLocked ? '' : form.personal}
                     onChange={set('personal')}
-                    placeholder="选填"
-                    className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums"
+                    disabled={amountLocked}
+                    placeholder={amountLocked ? '已加密' : '选填'}
+                    className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums disabled:opacity-60"
                   />
                 </div>
               </div>
+              {amountLocked && (
+                <div className="-mt-2 flex items-start gap-2 rounded-lg bg-[#FFFAEB] border border-[#FEDF89] px-3 py-2">
+                  <Icon name="lock" className="w-3.5 h-3.5 text-warn mt-0.5 shrink-0" />
+                  <div className="text-2xs text-warn leading-relaxed flex-1">
+                    金额已加密保存，当前未解锁看不到数值。这两个字段保持原值不变，其余信息仍可修改；
+                    <button type="button" onClick={requestUnlock} className="underline ml-1 font-medium">
+                      解锁后可查看并修改金额
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* 摘要 */}
               <div>

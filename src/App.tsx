@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BottomTabs, MobileBar, Sidebar, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
@@ -21,7 +21,7 @@ import { ExpenseEditor } from './pages/ExpenseEditor'
 import { MaterialsView } from './pages/MaterialsView'
 import { Settings } from './pages/Settings'
 import { deleteTimeline } from './lib/timelineOps'
-import { deleteExpense } from './lib/expenseOps'
+import { deleteExpense, decryptExpenses } from './lib/expenseOps'
 
 function Shell() {
   const { session } = useAuth()
@@ -33,7 +33,34 @@ function Shell() {
   const [editingIntake, setEditingIntake] = useState<IntakeRow | null | undefined>(undefined)
   const [editingTimeline, setEditingTimeline] = useState<TimelineRow | null | undefined>(undefined)
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
-  const { ready, unlocked, requestUnlock, lock, setVerifier } = useVault()
+  const { ready, unlocked, requestUnlock, lock, setVerifier, key } = useVault()
+
+  // 费用金额是密文入库的：原始数据（含 *_enc）留一份在 ref 里，
+  // 解锁/加锁时用它重新解密——加锁后再解锁不能把金额变成 null。
+  const rawRef = useRef<Dataset | null>(null)
+  const keyRef = useRef<CryptoKey | null>(null)
+  keyRef.current = key
+
+  /** 数据入口：注入校验串 → 解密费用金额 → 才放进 state 渲染 */
+  const pushData = useCallback(async (d: Dataset) => {
+    rawRef.current = d
+    setVerifier(d.crypto?.verifier)
+    const expenses = await decryptExpenses(d.expenses ?? [], keyRef.current)
+    setData({ ...d, expenses })
+  }, [setVerifier])
+
+  // 解锁状态变化（解锁、加锁、换口令）→ 用原始数据重算一次金额
+  useEffect(() => {
+    const raw = rawRef.current
+    if (!raw) return
+    let cancelled = false
+    void decryptExpenses(raw.expenses ?? [], key).then((expenses) => {
+      if (!cancelled) setData((prev) => (prev ? { ...prev, expenses } : prev))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [key])
 
   // 登出 / 切换账号时清掉本地缓存，避免上一个用户的数据残留在本机
   useEffect(() => {
@@ -50,8 +77,7 @@ function Shell() {
     void getCachedDataset<Dataset>().then((c) => {
       if (cancelled || !c) return
       painted = true
-      setVerifier(c.crypto?.verifier) // 注入口令校验串，输错口令会被拒绝
-      setData(c)
+      void pushData(c) // 注入校验串 + 解密金额
     })
 
     // 2) 后台拉最新数据；到位后覆盖缓存 + 渲染。阶段一中间态只在「尚无任何数据」时
@@ -59,14 +85,12 @@ function Shell() {
     loadDataset((d) => {
       if (painted) return
       painted = true
-      setVerifier(d.crypto?.verifier)
-      setData(d)
+      void pushData(d)
     })
       .then((d) => {
         painted = true
-        setVerifier(d.crypto?.verifier)
-        setData(d)
-        if (isCloud) void setCachedDataset(d) // 仅云端数据入缓存；演示模式不缓存
+        void pushData(d)
+        if (isCloud) void setCachedDataset(d) // 仅云端数据入缓存（缓存里仍是密文）；演示模式不缓存
       })
       .catch((e: Error) => {
         if (!painted) setErr(e.message) // 缓存也没有、网络又失败才报错
