@@ -30,3 +30,9 @@ lawyer-workbench-site-v3/
 
 # 调试/核验草稿与产物（scripts 下划线前缀文件，可能含敏感输出）
 scripts/_*
+
+# 本地 NAS 自建 Supabase 部署配置（含 .env 秘钥，不入库）
+supabase-selfhosted/
+supabase-selfhosted.tar.gz
+# 构建中间产物
+tsconfig.tsbuildinfo
