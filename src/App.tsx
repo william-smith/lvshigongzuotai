@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type TouchEvent } from 'react'
 import { BottomTabs, MobileBar, Sidebar, VIEW_ORDER, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
@@ -50,8 +50,17 @@ function Shell() {
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
   const { ready, unlocked, requestUnlock, lock, setVerifier, key } = useVault()
 
-  /** 视图切换动画方向：进入（左滑/打开）→ 'l'，返回（右滑/关闭）→ 'r' */
-  const [anim, setAnim] = useState<{ key: string; dir: 'l' | 'r' | 'fade' }>({ key: 'dashboard:x', dir: 'fade' })
+  /** 视图切换的 iOS 式双面板交叉滑动：切换时同时渲染「旧面板(滑出) + 新面板(滑入)」，
+   *  动画结束(onAnimationEnd)后清掉旧面板，回到单面板常态。dir: 'l'=下一页/打开，'r'=上一页/返回 */
+  type Trans = { prevView: ViewKey; prevCaseId: number | null; dir: 'l' | 'r'; active: boolean }
+  const [trans, setTrans] = useState<Trans | null>(null)
+  const prefersReduced = () =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  /** 动画结束后卸载旧面板（只认当前面板自身的 animationend，忽略子元素冒泡） */
+  const endTransition = (e: AnimationEvent) => {
+    if (e.target !== e.currentTarget) return
+    setTrans(null)
+  }
 
   // 费用金额是密文入库的：原始数据（含 *_enc）留一份在 ref 里，
   // 解锁/加锁时用它重新解密——加锁后再解锁不能把金额变成 null。
@@ -146,34 +155,134 @@ function Shell() {
     return { total: cases.length, active: active.length, dueSoon, closed: closed.length, thisMonth: thisMonth.length }
   }, [data])
 
-  /** 切换底部 tab（带方向动画）：按 tab 顺序比较决定滑入方向 */
+  /** 切换底部 tab（iOS 式交叉横滑）：按 tab 顺序比较决定滑动方向；切换动画进行中忽略新的手势/点击 */
   const goto = (v: ViewKey) => {
+    if (trans) return
     const from = VIEW_ORDER.indexOf(view)
     const to = VIEW_ORDER.indexOf(v)
-    const dir = to >= from ? 'l' : 'r'
+    const dir: 'l' | 'r' = to >= from ? 'l' : 'r'
+    if (prefersReduced()) {
+      setCaseId(null)
+      setView(v)
+      return
+    }
+    setTrans({ prevView: view, prevCaseId: caseId, dir, active: true })
     setCaseId(null)
     setView(v)
-    setAnim({ key: v + ':x', dir })
   }
 
-  /** 打开案件详情：从右侧滑入 */
+  /** 打开案件详情：新面板从右侧滑入（同时旧面板向左滑出） */
   const openCase = (id: number, v?: ViewKey) => {
+    if (trans) return
     if (v) setView(v)
+    if (prefersReduced()) {
+      setCaseId(id)
+      return
+    }
+    setTrans({ prevView: view, prevCaseId: caseId, dir: 'l', active: true })
     setCaseId(id)
-    setAnim({ key: 'case:' + id, dir: 'l' })
   }
 
-  /** 从案件详情返回列表：从左侧滑回 */
-  const backFromCase = () => {
+  /** 从案件详情返回列表。
+   *  dir 默认 'r'（右滑返回：旧面板向右滑出）；详情页在序列末尾继续左滑退出时传 'l'，
+   *  让动效方向与手指方向一致（向左滑出）。 */
+  const backFromCase = (dir: 'l' | 'r' = 'r') => {
+    if (trans) return
+    if (prefersReduced()) {
+      setCaseId(null)
+      return
+    }
+    setTrans({ prevView: view, prevCaseId: caseId, dir, active: true })
     setCaseId(null)
-    setAnim({ key: view + ':x', dir: 'r' })
   }
 
-  // 移动端横向手势：左滑切到下一个 tab / 打开下一块；右滑切上一个 tab / 从详情返回
+  /** 渲染某个视图（tab 或案件详情）的内容；双面板过渡时旧/新两屏都会调用它各渲染一次 */
+  const renderContent = (v: ViewKey, cid: number | null) => {
+    if (!data) return null
+    const cur = cid != null ? (data.cases.find((c) => c.id === cid) ?? null) : null
+    if (cid != null && cur) {
+      return (
+        <>
+          <MobileBar
+            title={cur.client}
+            subtitle={`${cur.cause} · ${cur.stage}`}
+            onBack={backFromCase}
+            right={
+              <div className="flex items-center">
+                <button onClick={() => setEditing(cur)} className="w-9 h-9 flex items-center justify-center text-ink-2" title="编辑案件">
+                  <Icon name="settings" className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={unlocked ? lock : requestUnlock}
+                  className={`w-9 h-9 flex items-center justify-center ${unlocked ? 'text-brand' : 'text-ink-2'}`}
+                  title={unlocked ? '锁定敏感信息' : '解锁敏感信息'}
+                >
+                  <Icon name={unlocked ? 'unlock' : 'lock'} className="w-4 h-4" />
+                </button>
+              </div>
+            }
+          />
+          <CaseDetail
+            c={cur}
+            data={data}
+            onBack={backFromCase}
+            onExitBySwipe={() => backFromCase('l')}
+            onEdit={() => setEditing(cur)}
+            onCreateTimeline={() => setEditingTimeline(null)}
+            onEditTimeline={(t) => setEditingTimeline(t)}
+            onDeleteTimeline={requestDeleteTimeline}
+            onCreateExpense={() => setEditingExpense(null)}
+            onEditExpense={(e) => setEditingExpense(e)}
+            onDeleteExpense={requestDeleteExpense}
+          />
+          {editingTimeline !== undefined && (
+            <TimelineEditor mode={editingTimeline ? 'edit' : 'create'} initial={editingTimeline ?? null} caseId={cur.id} onClose={() => setEditingTimeline(undefined)} onSaved={onTimelineSaved} onDeleted={doDeleteTimeline} />
+          )}
+          {editingExpense !== undefined && (
+            <ExpenseEditor mode={editingExpense ? 'edit' : 'create'} initial={editingExpense ?? null} caseId={cur.id} onClose={() => setEditingExpense(undefined)} onSaved={onExpenseSaved} onDeleted={doDeleteExpense} />
+          )}
+        </>
+      )
+    }
+    switch (v) {
+      case 'dashboard':
+        return <Dashboard data={data} stats={stats} onOpenCase={openCase} onViewCases={() => goto('cases')} />
+      case 'cases':
+        return <CaseList data={data} stats={stats} onOpenCase={openCase} onCreateCase={() => setEditing(null)} />
+      case 'expenses':
+        return <ExpenseTable data={data} onOpenCase={openCase} />
+      case 'intakes':
+        return (
+          <IntakesList
+            data={data}
+            onOpenIntake={(id) => {
+              const found = data.intakes.find((i) => i.id === id)
+              if (found) setEditingIntake(found)
+            }}
+            onOpenCase={(id) => openCase(id, 'cases')}
+            onCreateIntake={() => setEditingIntake(null)}
+          />
+        )
+      case 'settings':
+        return <Settings />
+      default:
+        return <MaterialsView data={data} onOpenCase={openCase} />
+    }
+  }
+
+  // 移动端横向手势：左滑切到下一个 tab / 打开下一块；右滑切上一个 tab
+  // ⚠️ 案件详情页（caseId != null）时页面层完全交出手势——详情页内部是一条
+  //    「4 个子页签 + 退出」的 5 位置序列，由 CaseDetail 自己按序推进，
+  //    页面层若也响应会造成一次滑动触发两个动作（翻页 + 退出）。
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
   const onTouchStart = (e: TouchEvent) => {
     // 编辑器/弹层打开时不响应手势，避免误触
     if (editing !== undefined || editingIntake !== undefined || editingTimeline !== undefined || editingExpense !== undefined) {
+      touchStart.current = null
+      return
+    }
+    // 详情页内横滑全部交给 CaseDetail 处理
+    if (caseId != null) {
       touchStart.current = null
       return
     }
@@ -191,10 +300,6 @@ function Shell() {
     const ady = Math.abs(dy)
     // 必须横向主导且位移够大、速度够快，才当作切换手势（不干扰纵向滚动/拖拽）
     if (adx < 64 || adx < ady * 1.3 || Date.now() - s.t > 800) return
-    if (caseId != null) {
-      if (dx > 0) backFromCase() // 详情页右滑 = 返回
-      return
-    }
     const i = VIEW_ORDER.indexOf(view)
     if (dx < 0 && i < VIEW_ORDER.length - 1) goto(VIEW_ORDER[i + 1])
     else if (dx > 0 && i > 0) goto(VIEW_ORDER[i - 1])
@@ -264,19 +369,31 @@ function Shell() {
 
   // 费用保存/删除回写
   const onExpenseSaved = (row: ExpenseRow, isNew: boolean) => {
-    setData((prev) => {
-      if (!prev) return prev
-      let finalRow = row
-      let expenses = prev.expenses
-      if (isNew) {
-        const maxId = prev.expenses.reduce((m, e) => Math.max(m, e.id), 0)
-        if (!row.id || prev.expenses.some((e) => e.id === row.id)) finalRow = { ...row, id: maxId + 1 }
-        expenses = [finalRow, ...prev.expenses]
-      } else {
-        expenses = prev.expenses.map((e) => (e.id === finalRow.id ? finalRow : e))
-      }
-      return { ...prev, expenses }
-    })
+    // 保存回包是数据库原始行：ENC_ONLY 下 amount/personal 明文列恒为 null，
+    // 不解密直接入 state，列表就会把刚保存的金额显示成「—」（要刷新一次才恢复）。
+    void decryptExpenses([row], keyRef.current)
+      .catch(() => [row])
+      .then(([dec]) => {
+        const saved = dec ?? row
+        let finalId = saved.id
+        if (isNew) {
+          const rawList = rawRef.current?.expenses ?? []
+          const maxId = rawList.reduce((m, e) => Math.max(m, e.id), 0)
+          if (!finalId || rawList.some((e) => e.id === finalId)) finalId = maxId + 1
+        }
+        const apply = (list: ExpenseRow[]): ExpenseRow[] => {
+          const r = { ...saved, id: finalId }
+          if (isNew) {
+            return list.some((e) => e.id === finalId)
+              ? list.map((e) => (e.id === finalId ? r : e))
+              : [r, ...list]
+          }
+          return list.map((e) => (e.id === finalId ? r : e))
+        }
+        // rawRef（密文原始数据）同步更新：加锁/解锁重算金额以它为准，否则会回退到编辑前的旧值
+        if (rawRef.current) rawRef.current = { ...rawRef.current, expenses: apply(rawRef.current.expenses) }
+        setData((prev) => (prev ? { ...prev, expenses: apply(prev.expenses) } : prev))
+      })
     setEditingExpense(undefined)
   }
   const doDeleteExpense = async (id: number) => {
@@ -302,7 +419,8 @@ function Shell() {
     )
   }
 
-  const current = data.cases.find((c) => c.id === caseId) ?? null
+  // 切换动画进行中：旧面板仍在，忽略新的滑动手势，避免动画被中途打断错位
+  if (trans) touchStart.current = null
 
   return (
     <div className="h-screen flex bg-canvas text-ink">
@@ -320,89 +438,19 @@ function Shell() {
         onTouchEnd={onTouchEnd}
       >
         <VaultSetupGuide />
-        <div key={anim.key} className={`lw-anim-${anim.dir} flex-1 min-w-0 flex flex-col overflow-hidden`}>
-        {caseId && current ? (
-          <>
-            <MobileBar
-              title={current.client}
-              subtitle={`${current.cause} · ${current.stage}`}
-              onBack={backFromCase}
-              right={
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setEditing(current)}
-                    className="w-9 h-9 flex items-center justify-center text-ink-2"
-                    title="编辑案件"
-                  >
-                    <Icon name="settings" className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={unlocked ? lock : requestUnlock}
-                    className={`w-9 h-9 flex items-center justify-center ${
-                      unlocked ? 'text-brand' : 'text-ink-2'
-                    }`}
-                    title={unlocked ? '锁定敏感信息' : '解锁敏感信息'}
-                  >
-                    <Icon name={unlocked ? 'unlock' : 'lock'} className="w-4 h-4" />
-                  </button>
-                </div>
-              }
-            />
-            <CaseDetail
-              c={current}
-              data={data}
-              onBack={backFromCase}
-              onEdit={() => setEditing(current)}
-              onCreateTimeline={() => setEditingTimeline(null)}
-              onEditTimeline={(t) => setEditingTimeline(t)}
-              onDeleteTimeline={requestDeleteTimeline}
-              onCreateExpense={() => setEditingExpense(null)}
-              onEditExpense={(e) => setEditingExpense(e)}
-              onDeleteExpense={requestDeleteExpense}
-            />
-
-            {editingTimeline !== undefined && (
-              <TimelineEditor
-                mode={editingTimeline ? 'edit' : 'create'}
-                initial={editingTimeline ?? null}
-                caseId={current.id}
-                onClose={() => setEditingTimeline(undefined)}
-                onSaved={onTimelineSaved}
-                onDeleted={doDeleteTimeline}
-              />
-            )}
-            {editingExpense !== undefined && (
-              <ExpenseEditor
-                mode={editingExpense ? 'edit' : 'create'}
-                initial={editingExpense ?? null}
-                caseId={current.id}
-                onClose={() => setEditingExpense(undefined)}
-                onSaved={onExpenseSaved}
-                onDeleted={doDeleteExpense}
-              />
-            )}
-          </>
-        ) : view === 'dashboard' ? (
-          <Dashboard data={data} stats={stats} onOpenCase={openCase} onViewCases={() => goto('cases')} />
-        ) : view === 'cases' ? (
-          <CaseList data={data} stats={stats} onOpenCase={openCase} onCreateCase={() => setEditing(null)} />
-        ) : view === 'expenses' ? (
-          <ExpenseTable data={data} onOpenCase={openCase} />
-        ) : view === 'intakes' ? (
-          <IntakesList
-            data={data}
-            onOpenIntake={(id) => {
-              const found = data.intakes.find((i) => i.id === id)
-              if (found) setEditingIntake(found)
-            }}
-            onOpenCase={(id) => openCase(id, 'cases')}
-            onCreateIntake={() => setEditingIntake(null)}
-          />
-        ) : view === 'settings' ? (
-          <Settings />
-        ) : (
-          <MaterialsView data={data} onOpenCase={openCase} />
-        )}
+        <div className={`relative flex-1 min-w-0 overflow-hidden ${trans ? 'pointer-events-none' : ''}`}>
+          {trans ? (
+            <>
+              {/* 旧面板：向离开方向整屏滑出（轻微淡出） */}
+              <div className={`lw-pane lw-exit-${trans.dir}`}>{renderContent(trans.prevView, trans.prevCaseId)}</div>
+              {/* 新面板：从进入方向整屏滑入；动画结束卸载旧面板 */}
+              <div className={`lw-pane lw-enter-${trans.dir}`} onAnimationEnd={endTransition}>
+                {renderContent(view, caseId)}
+              </div>
+            </>
+          ) : (
+            <div className="h-full min-w-0 flex flex-col overflow-hidden">{renderContent(view, caseId)}</div>
+          )}
         </div>
       </main>
 

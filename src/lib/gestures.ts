@@ -73,26 +73,26 @@ export function useSwipeBack<T extends HTMLElement>(onBack: () => void, enabled 
 }
 
 /**
- * 「返回 + 翻页」组合手势，给有子 tab 的页面用（如案件详情）。
+ * 「子页签翻页」手势：**挂载元素范围内，整屏横滑都按顺序切换子页签**。
  *
- * 判定看**滑动距离**，不看屏幕坐标（屏幕边缘是安卓系统热区，网页收不到）：
- * - 横向位移 40~120px（短滑）→ 翻上一个/下一个 tab，**起手在任何位置都算**（整屏可翻页）
- * - 横向位移 ≥120px（长滑）→ 返回，起手在任何位置都算，慢拖也认
- * - 太短（<40px）或竖向主导 → 忽略，不当手势
+ * 语义设计（案件详情页）：
+ * - 详情页里横滑**只有一种含义**——按顺序切上/下一个子页签，整屏任意位置起手都算；
+ * - 返回上一页改由左上角返回按钮承担（详情页容器有自己的 MobileBar / 桌面顶栏）。
+ *   这样同一页面内不再有两种横滑语义，从根上杜绝「想翻页却退出去了」的歧义。
  *
- * 这样整个屏幕短滑都能翻页、长滑才返回，不必够到 tab 条。
+ * 因此本 hook 不需要区域标记，也不区分滑动距离——只要横向主导、位移够大就翻一页。
  *
- * ⚠️ 不要改用「屏幕左右边缘」判定：安卓 10+ 全面屏手势会**优先吃掉屏幕边缘的滑动**
- * （表现为滑一下直接回桌面），网页只能收到中间区域的事件，边缘方案实测不可用。
+ * ⚠️ 起手于「可横向滚动容器」（如宽表格）时不接管，让原生横滚生效。
+ * ⚠️ 不要改用「屏幕左右边缘」判定：安卓 10+ 全面屏手势会优先吃掉屏幕边缘的滑动。
  */
-export function useSwipeNavigation<T extends HTMLElement>({
-  onBack,
-  onPrevTab,
-  onNextTab,
+export function useSwipeTabs<T extends HTMLElement>({
+  onSwipeLeft,
+  onSwipeRight,
 }: {
-  onBack: () => void
-  onPrevTab?: () => void
-  onNextTab?: () => void
+  /** 手指向左滑（dx<0） */
+  onSwipeLeft?: () => void
+  /** 手指向右滑（dx>0） */
+  onSwipeRight?: () => void
 }) {
   const ref = useRef<T | null>(null)
 
@@ -109,11 +109,10 @@ export function useSwipeNavigation<T extends HTMLElement>({
       if (e.touches.length !== 1) return
       const node = e.target as HTMLElement | null
       if (!node || inside(node.tagName)) return
+      // 起手在横向可滚动容器（表头/表格等）内时不接管，交给原生横滚
       let p: HTMLElement | null = node
       while (p && p !== el) {
-        // 可横向滚动的容器（如费用表格）不接管，让原生横向滚动；
-        // 唯独 tab 条本身也横向可滚，但它需要响应横滑翻页，故豁免
-        if (p.scrollWidth - p.clientWidth > 8 && !p.hasAttribute('data-swipe-tabs')) return
+        if (p.scrollWidth - p.clientWidth > 8) return
         p = p.parentElement
       }
       tracking = true
@@ -132,14 +131,11 @@ export function useSwipeNavigation<T extends HTMLElement>({
       const ay = Math.abs(dy)
       // 竖向主导不算手势（避免和页面滚动打架）
       if (ax <= ay * 1.6) return
-      // 短滑（40~120px）= 翻上一个/下一个 tab，起手在任何位置都算（整屏可翻页）
-      if (ax >= 40 && ax < 120) {
-        if (dx < 0) onNextTab?.()
-        else onPrevTab?.()
-        return
-      }
-      // 长距离横向滑（≥120px）= 返回，起手在任何位置都算，慢拖也认
-      if (ax >= 120) onBack()
+      if (ax < 40) return
+      // 方向语义由调用方决定，这里只报「滑向哪边」：
+      //   onSwipeRight = 手指向右（dx>0），onSwipeLeft = 手指向左（dx<0）
+      if (dx > 0) onSwipeRight?.()
+      else onSwipeLeft?.()
     }
 
     const onCancel = () => (tracking = false)
@@ -152,7 +148,7 @@ export function useSwipeNavigation<T extends HTMLElement>({
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onCancel)
     }
-  }, [onBack, onPrevTab, onNextTab])
+  }, [onSwipeLeft, onSwipeRight])
 
   return ref
 }

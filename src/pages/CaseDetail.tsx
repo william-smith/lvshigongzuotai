@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '../components/Icon'
 import { SecretPhone, SecretText } from '../components/SecretText'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
-import { useSwipeNavigation } from '../lib/gestures'
+import { useSwipeTabs } from '../lib/gestures'
 import { appStores, openScheme } from '../components/ScanLauncher'
 import { MaterialsView } from './MaterialsView'
 import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type TimelineRow } from '../lib/types'
@@ -58,10 +58,13 @@ export function CaseDetail({
   onCreateExpense,
   onEditExpense,
   onDeleteExpense,
+  onExitBySwipe,
 }: {
   c: CaseRow
   data: Dataset
   onBack: () => void
+  /** 在序列末尾（最后一个子页签）继续左滑时退出详情：动效方向为向左滑出 */
+  onExitBySwipe?: () => void
   onEdit: () => void
   onCreateTimeline: () => void
   onEditTimeline: (t: TimelineRow) => void
@@ -71,6 +74,37 @@ export function CaseDetail({
   onDeleteExpense: (id: number) => void
 }) {
   const [tab, setTab] = useState<Tab>('overview')
+  // 子页签切换动画：「先出后进」两段式（两面板不共存，避免出现半透明残影）
+  //   phase 'out' = 渲染旧页签并淡出；动画结束后切 'in' = 渲染新页签淡入；再结束则归零
+  //   dir: 'l' = 切向右侧页签（旧向左出、新从右进），'r' = 切向左侧页签
+  const [tabAnim, setTabAnim] = useState<{ prev: Tab; next: Tab; dir: 'l' | 'r'; phase: 'out' | 'in' } | null>(
+    null,
+  )
+  const prefersReducedMotion = () =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const switchTab = (next: Tab) => {
+    if (next === tab || tabAnim) return
+    if (prefersReducedMotion()) {
+      setTab(next)
+      return
+    }
+    const dir = tabOrder.indexOf(next) >= tabOrder.indexOf(tab) ? 'l' : 'r'
+    setTabAnim({ prev: tab, next, dir, phase: 'out' })
+    setTab(next)
+  }
+  // 兜底：若页面切到后台导致 animationend 未触发，用定时器强制推进/收尾，避免卡在旧面板
+  useEffect(() => {
+    if (!tabAnim) return
+    const toIn = setTimeout(
+      () => setTabAnim((s) => (s && s.phase === 'out' ? { ...s, phase: 'in' } : s)),
+      170,
+    )
+    const toEnd = setTimeout(() => setTabAnim(null), 420)
+    return () => {
+      clearTimeout(toIn)
+      clearTimeout(toEnd)
+    }
+  }, [tabAnim])
   const { visible: amtVisible, toggle: toggleAmt } = useAmountVisible()
 
   const timeline = useMemo(
@@ -99,21 +133,160 @@ export function CaseDetail({
     { key: 'material', label: '文书与证据', n: materials.length },
   ]
 
-  // 移动端：左边缘滑动=返回；屏幕中间左右滑=切换 tab
+  // 移动端横滑：详情页内是一条子页签序列（概览 → 时间线 → 费用 → 文书与证据）
+  //   手指从右向左滑（左滑）= 切到右边一个子页签（前进一格）
+  //     在最右边（文书与证据）再左滑 → 绕回第一个（概览），首尾相接
+  //   手指从左向右滑（右滑）= 往左回退一格；在第一个（概览）再右滑 → 退出案件详情
   const tabOrder: Tab[] = ['overview', 'timeline', 'expense', 'material']
-  const turnTab = (dir: 1 | -1) => {
-    const next = tabOrder.indexOf(tab) + dir
-    if (next < 0 || next >= tabOrder.length) return
-    setTab(tabOrder[next])
+  const step = (dir: 1 | -1) => {
+    const i = tabOrder.indexOf(tab) + dir
+    if (i >= tabOrder.length) return switchTab(tabOrder[0]) // 末位再前进 → 绕回概览
+    if (i < 0) return (onExitBySwipe ?? onBack)() // 首位再后退 → 退出详情
+    switchTab(tabOrder[i])
   }
-  const swipeRef = useSwipeNavigation<HTMLDivElement>({
-    onBack,
-    onPrevTab: () => turnTab(-1),
-    onNextTab: () => turnTab(1),
+  // 挂在详情页根容器上：整屏横滑都驱动这条序列。
+  // 左滑（手指向左）= 前进到右边一个子页签；右滑（手指向右）= 后退
+  const swipeRef = useSwipeTabs<HTMLDivElement>({
+    onSwipeLeft: () => step(1),
+    onSwipeRight: () => step(-1),
   })
 
+  const renderTabPane = (t: Tab) => {
+    if (t === 'overview') {
+      return (
+        <div className="space-y-3">
+          <div>
+            <div className="text-2xs text-ink-3 mb-1">案件阶段（原始记录）</div>
+            <div className="text-sm">{c.stage || '—'}</div>
+          </div>
+          <div>
+            <div className="text-2xs text-ink-3 mb-1">详细情况</div>
+            <div className="text-sm leading-relaxed text-ink-2">
+              <SecretText mask={c.detail_mask} enc={c.detail_enc} linkPhone />
+            </div>
+          </div>
+          {!c.detail_mask && !c.detail_enc && <div className="text-sm text-ink-3">该案件暂无详细记录</div>}
+        </div>
+      )
+    }
+    if (t === 'timeline') {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-2xs text-ink-3">共 {timeline.length} 条记录</span>
+            <button
+              type="button"
+              onClick={onCreateTimeline}
+              className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
+            >
+              <Icon name="plus" className="w-3.5 h-3.5" />
+              新增
+            </button>
+          </div>
+          {timeline.length === 0 ? (
+            <Empty text="暂无时间线记录，点「新增」补充节点" />
+          ) : (
+            <ol className="relative pl-5 space-y-4">
+              <span className="absolute left-[5px] top-1.5 bottom-1.5 w-px bg-line" />
+              {timeline.map((t) => (
+                <li key={t.id} className="group relative">
+                  <span className="absolute -left-5 top-1.5 w-2.5 h-2.5 rounded-full bg-brand ring-4 ring-white" />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-2xs text-ink-3">{fmtDateTime(t.at)}</div>
+                      <div className="text-sm text-ink-2 leading-relaxed mt-0.5">
+                        <SecretText mask={t.content_mask} enc={t.content_enc} linkPhone />
+                      </div>
+                    </div>
+                    <RowActions onEdit={() => onEditTimeline(t)} onDelete={() => onDeleteTimeline(t.id)} />
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )
+    }
+    if (t === 'expense') {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-2xs text-ink-3">共 {expenses.length} 条记录</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleAmt}
+                title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
+                className="h-8 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1 text-xs"
+              >
+                <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-3.5 h-3.5" />
+                {amtVisible ? '隐藏金额' : '显示金额'}
+              </button>
+              <button
+                type="button"
+                onClick={onCreateExpense}
+                className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
+              >
+                <Icon name="plus" className="w-3.5 h-3.5" />
+                新增
+              </button>
+            </div>
+          </div>
+          {expenses.length === 0 ? (
+            <Empty text="暂无费用记录，点「新增」登记收支" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-ink-2 text-xs">
+                    <th className="text-left font-medium py-2 pr-3">日期</th>
+                    <th className="text-left font-medium py-2 pr-3">收支</th>
+                    <th className="text-left font-medium py-2 pr-3">分类</th>
+                    <th className="text-right font-medium py-2 pl-3 whitespace-nowrap">开票金额</th>
+                    <th className="text-left font-medium py-2 px-3">费用详情</th>
+                    <th className="text-right font-medium py-2 pl-3 whitespace-nowrap">个人得金额</th>
+                    <th className="text-right font-medium py-2 pl-3 w-20">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenses.map((e) => (
+                    <tr key={e.id} className="group border-t border-line">
+                      <td className="py-2.5 pr-3 text-ink-2 text-xs whitespace-nowrap">{fmtDate(e.at)}</td>
+                      <td className="py-2.5 pr-3">
+                        <span
+                          className={`text-2xs px-1.5 py-0.5 rounded ${
+                            (e.direction || '').startsWith('收') ? 'bg-[#ECFDF3] text-ok' : 'bg-canvas text-ink-2'
+                          }`}
+                        >
+                          {e.direction || '—'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3 text-ink-2">{e.category || '—'}</td>
+                      <td className="py-2.5 pl-3 text-right tabular-nums">
+                        <SecretMoney value={e.amount} />
+                      </td>
+                      <td className="py-2.5 px-3 text-ink-2">
+                        <SecretText mask={e.detail} enc={e.detail_enc} />
+                      </td>
+                      <td className="py-2.5 pl-3 text-right tabular-nums">
+                        <SecretMoney value={e.personal} />
+                      </td>
+                      <td className="py-2.5 pl-3 text-right">
+                        <RowActions onEdit={() => onEditExpense(e)} onDelete={() => onDeleteExpense(e.id)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )
+    }
+    return <MaterialsView data={data} fixedCaseId={c.id} compact />
+  }
+
   return (
-    <div ref={swipeRef} className="flex-1 overflow-y-auto pb-24 md:pb-0">
+    <div ref={swipeRef} className="swipe-x flex-1 overflow-y-auto pb-24 md:pb-0">
       {/* 桌面顶栏 */}
       <div className="hidden md:flex h-14 items-center gap-3 px-6 bg-white border-b border-line sticky top-0 z-10">
         <button
@@ -184,12 +357,13 @@ export function CaseDetail({
 
         {/* 页签 */}
         <div className="bg-white rounded-xl border border-line shadow-card overflow-hidden">
-          {/* data-swipe-tabs：在这条 tab 上左右滑=切换页签（其余区域横向滑=返回） */}
-          <div data-swipe-tabs className="flex gap-1 px-3 border-b border-line overflow-x-auto">
+          {/* 页签条：不可用 overflow-x-auto——横向可滚容器会被浏览器优先当作原生横滚消费，
+              手势收不到。四个页签在手机宽度内放得下，直接 flex 平铺。 */}
+          <div className="flex gap-1 px-3 border-b border-line">
             {tabs.map((t) => (
               <button
                 key={t.key}
-                onClick={() => setTab(t.key)}
+                onClick={() => switchTab(t.key)}
                 className={`shrink-0 h-11 px-3 text-sm border-b-2 -mb-px ${
                   tab === t.key ? 'border-brand text-brand font-medium' : 'border-transparent text-ink-2 hover:text-ink'
                 }`}
@@ -200,138 +374,27 @@ export function CaseDetail({
             ))}
           </div>
 
-          <div className="p-5">
-            {tab === 'overview' && (
-              <div className="space-y-3">
-                <div>
-                  <div className="text-2xs text-ink-3 mb-1">案件阶段（原始记录）</div>
-                  <div className="text-sm">{c.stage || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-2xs text-ink-3 mb-1">详细情况</div>
-                  <div className="text-sm leading-relaxed text-ink-2">
-                    <SecretText mask={c.detail_mask} enc={c.detail_enc} linkPhone />
-                  </div>
-                </div>
-                {!c.detail_mask && !c.detail_enc && (
-                  <div className="text-sm text-ink-3">该案件暂无详细记录</div>
-                )}
+          <div className="p-5 relative overflow-hidden">
+            {tabAnim ? (
+              /* 同一时刻只渲染一个面板：先旧（淡出），动画结束再换新（淡入）——避免重叠残影 */
+              <div
+                key={
+                  (tabAnim.phase === 'out' ? 'out-' : 'in-') +
+                  (tabAnim.phase === 'out' ? tabAnim.prev : tabAnim.next)
+                }
+                className={`${tabAnim.phase === 'out' ? 'lw-sub-out' : 'lw-sub-in'} ${
+                  tabAnim.dir === 'l' ? 'lw-dir-l' : 'lw-dir-r'
+                }`}
+                onAnimationEnd={(e) => {
+                  // 只认面板自身的 animationend，忽略内部子元素冒泡上来的事件
+                  if (e.target !== e.currentTarget) return
+                  setTabAnim((s) => (s && s.phase === 'out' ? { ...s, phase: 'in' } : null))
+                }}
+              >
+                {renderTabPane(tabAnim.phase === 'out' ? tabAnim.prev : tabAnim.next)}
               </div>
-            )}
-
-            {tab === 'timeline' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-2xs text-ink-3">共 {timeline.length} 条记录</span>
-                  <button
-                    type="button"
-                    onClick={onCreateTimeline}
-                    className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
-                  >
-                    <Icon name="plus" className="w-3.5 h-3.5" />
-                    新增
-                  </button>
-                </div>
-                {timeline.length === 0 ? (
-                  <Empty text="暂无时间线记录，点「新增」补充节点" />
-                ) : (
-                  <ol className="relative pl-5 space-y-4">
-                    <span className="absolute left-[5px] top-1.5 bottom-1.5 w-px bg-line" />
-                    {timeline.map((t) => (
-                      <li key={t.id} className="group relative">
-                        <span className="absolute -left-5 top-1.5 w-2.5 h-2.5 rounded-full bg-brand ring-4 ring-white" />
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-2xs text-ink-3">{fmtDateTime(t.at)}</div>
-                            <div className="text-sm text-ink-2 leading-relaxed mt-0.5">
-                              <SecretText mask={t.content_mask} enc={t.content_enc} linkPhone />
-                            </div>
-                          </div>
-                          <RowActions onEdit={() => onEditTimeline(t)} onDelete={() => onDeleteTimeline(t.id)} />
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            )}
-
-            {tab === 'expense' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-2xs text-ink-3">共 {expenses.length} 条记录</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={toggleAmt}
-                      title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
-                      className="h-8 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1 text-xs"
-                    >
-                      <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-3.5 h-3.5" />
-                      {amtVisible ? '隐藏金额' : '显示金额'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onCreateExpense}
-                      className="h-8 px-3 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-hover flex items-center gap-1"
-                    >
-                      <Icon name="plus" className="w-3.5 h-3.5" />
-                      新增
-                    </button>
-                  </div>
-                </div>
-                {expenses.length === 0 ? (
-                  <Empty text="暂无费用记录，点「新增」登记收支" />
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-ink-2 text-xs">
-                          <th className="text-left font-medium py-2 pr-3">日期</th>
-                          <th className="text-left font-medium py-2 pr-3">收支</th>
-                          <th className="text-left font-medium py-2 pr-3">分类</th>
-                          <th className="text-right font-medium py-2 pl-3 whitespace-nowrap">开票金额</th>
-                          <th className="text-left font-medium py-2 px-3">费用详情</th>
-                          <th className="text-right font-medium py-2 pl-3 whitespace-nowrap">个人得金额</th>
-                          <th className="text-right font-medium py-2 pl-3 w-20">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {expenses.map((e) => (
-                          <tr key={e.id} className="group border-t border-line">
-                            <td className="py-2.5 pr-3 text-ink-2 text-xs whitespace-nowrap">{fmtDate(e.at)}</td>
-                            <td className="py-2.5 pr-3">
-                              <span
-                                className={`text-2xs px-1.5 py-0.5 rounded ${
-                                  (e.direction || '').startsWith('收') ? 'bg-[#ECFDF3] text-ok' : 'bg-canvas text-ink-2'
-                                }`}
-                              >
-                                {e.direction || '—'}
-                              </span>
-                            </td>
-                            <td className="py-2.5 pr-3 text-ink-2">{e.category || '—'}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">
-                              <SecretMoney value={e.amount} />
-                            </td>
-                            <td className="py-2.5 px-3 text-ink-2">
-                              <SecretText mask={e.detail} enc={e.detail_enc} />
-                            </td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">
-                              <SecretMoney value={e.personal} />
-                            </td>
-                            <td className="py-2.5 pl-3 text-right">
-                              <RowActions onEdit={() => onEditExpense(e)} onDelete={() => onDeleteExpense(e.id)} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {tab === 'material' && (
-              <MaterialsView data={data} fixedCaseId={c.id} compact />
+            ) : (
+              <div key={'idle-' + tab}>{renderTabPane(tab)}</div>
             )}
           </div>
         </div>

@@ -29,25 +29,45 @@
   touch-action: pan-y;
 }
 
-/* 视图切换动画：进入从左/右滑入 + 淡入；返回方向与手势一致 */
-@keyframes lw-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+/* 视图切换动画：iOS 式双面板交叉横滑
+   - 旧面板向离开方向滑出（同时轻微淡出，制造景深），新面板从进入方向滑入
+   - 两个面板同步运动，整体像一整块内容横向滚动，消除「硬切 + 淡入」的突兀感
+   - 缓动用 iOS 页面滑动的标准曲线 cubic-bezier(0.32,0.72,0,1)，收尾自然减速 */
+.lw-pane {
+  position: absolute;
+  inset: 0;
+  will-change: transform, opacity;
 }
-@keyframes lw-slide-l {
-  from { opacity: 0; transform: translateX(28px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes lw-slide-r {
-  from { opacity: 0; transform: translateX(-28px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-.lw-anim-fade { animation: lw-fade 0.2s ease both; }
-.lw-anim-l { animation: lw-slide-l 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
-.lw-anim-r { animation: lw-slide-r 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+/* 页面级切换刻意放慢到 0.55s（比子页签的 0.20s 长近 3 倍）：两者体感差异必须一眼可辨 */
+.lw-enter-l { animation: lw-enter-from-right 0.55s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.lw-enter-r { animation: lw-enter-from-left 0.55s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.lw-exit-l  { animation: lw-exit-to-left   0.55s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.lw-exit-r  { animation: lw-exit-to-right  0.55s cubic-bezier(0.32, 0.72, 0, 1) both; }
 
+/* 进入：从右/左整屏宽滑入（dir 'l' = 下一页/打开，'r' = 上一页/返回） */
+@keyframes lw-enter-from-right { from { transform: translateX(100%); opacity: 1; } to { transform: translateX(0); opacity: 1; } }
+@keyframes lw-enter-from-left  { from { transform: translateX(-100%); opacity: 1; } to { transform: translateX(0); opacity: 1; } }
+/* 离开：向相反方向整屏宽滑出，并轻微淡出 */
+@keyframes lw-exit-to-left  { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-100%); opacity: 0.5; } }
+@keyframes lw-exit-to-right { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0.5; } }
+
+/* 无动画偏好：直接切换，不渲染双面板（见 App.tsx） */
 @media (prefers-reduced-motion: reduce) {
-  .lw-anim-fade,
-  .lw-anim-l,
-  .lw-anim-r { animation: none; }
+  .lw-enter-l, .lw-enter-r, .lw-exit-l, .lw-exit-r { animation: none; }
+}
+
+/* 详情子页签切换：「先出后进」两段式，两个面板绝不共存 → 无残影
+   - 运动类型刻意与页面级区分：这里**只做淡入淡出，零位移**
+   - 旧面板淡出到 opacity 0（0.08s），动画结束才挂载新面板淡入（0.12s），合计 0.20s
+   - 页面级是「整屏横向滑动」，子页签是「原地淡入淡出」——两种完全不同的运动语言，一眼可辨
+   - 方向类 lw-dir-* 保留在 DOM 上仅为语义/未来扩展，不再产生位移 */
+.lw-sub-out, .lw-sub-in { will-change: opacity; animation-fill-mode: both; }
+.lw-sub-out.lw-dir-l,
+.lw-sub-out.lw-dir-r { animation: lw-sub-fade-out 0.08s cubic-bezier(0.4, 0, 1, 1) both; }
+.lw-sub-in.lw-dir-l,
+.lw-sub-in.lw-dir-r  { animation: lw-sub-fade-in  0.12s cubic-bezier(0, 0, 0.2, 1) both; }
+@keyframes lw-sub-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes lw-sub-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .lw-sub-out, .lw-sub-in { animation: none !important; }
 }
