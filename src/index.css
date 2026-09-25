@@ -23,3 +23,31 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* 移动端：横向手势接管（纵向滚动仍交给浏览器） */
+.swipe-x {
+  touch-action: pan-y;
+}
+
+/* 视图切换动画：进入从左/右滑入 + 淡入；返回方向与手势一致 */
+@keyframes lw-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes lw-slide-l {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes lw-slide-r {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.lw-anim-fade { animation: lw-fade 0.2s ease both; }
+.lw-anim-l { animation: lw-slide-l 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+.lw-anim-r { animation: lw-slide-r 0.26s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lw-anim-fade,
+  .lw-anim-l,
+  .lw-anim-r { animation: none; }
+}

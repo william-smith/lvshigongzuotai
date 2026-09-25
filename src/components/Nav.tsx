@@ -15,6 +15,9 @@ const ITEMS: { key: ViewKey; label: string; icon: IconName; badge?: number }[] =
   { key: 'settings', label: '设置', icon: 'settings' },
 ]
 
+/** 底部 tab 的顺序（左滑→下一个，右滑→上一个） */
+export const VIEW_ORDER: ViewKey[] = ITEMS.map((i) => i.key)
+
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-4 h-14 shrink-0">

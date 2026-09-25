@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BottomTabs, MobileBar, Sidebar, type ViewKey } from './components/Nav'
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
+import { BottomTabs, MobileBar, Sidebar, VIEW_ORDER, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
 import { Icon } from './components/Icon'
@@ -34,6 +34,9 @@ function Shell() {
   const [editingTimeline, setEditingTimeline] = useState<TimelineRow | null | undefined>(undefined)
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
   const { ready, unlocked, requestUnlock, lock, setVerifier, key } = useVault()
+
+  /** 视图切换动画方向：进入（左滑/打开）→ 'l'，返回（右滑/关闭）→ 'r' */
+  const [anim, setAnim] = useState<{ key: string; dir: 'l' | 'r' | 'fade' }>({ key: 'dashboard:x', dir: 'fade' })
 
   // 费用金额是密文入库的：原始数据（含 *_enc）留一份在 ref 里，
   // 解锁/加锁时用它重新解密——加锁后再解锁不能把金额变成 null。
@@ -119,9 +122,58 @@ function Shell() {
     return { total: cases.length, active: active.length, dueSoon, closed: closed.length, thisMonth: thisMonth.length }
   }, [data])
 
+  /** 切换底部 tab（带方向动画）：按 tab 顺序比较决定滑入方向 */
   const goto = (v: ViewKey) => {
+    const from = VIEW_ORDER.indexOf(view)
+    const to = VIEW_ORDER.indexOf(v)
+    const dir = to >= from ? 'l' : 'r'
     setCaseId(null)
     setView(v)
+    setAnim({ key: v + ':x', dir })
+  }
+
+  /** 打开案件详情：从右侧滑入 */
+  const openCase = (id: number, v?: ViewKey) => {
+    if (v) setView(v)
+    setCaseId(id)
+    setAnim({ key: 'case:' + id, dir: 'l' })
+  }
+
+  /** 从案件详情返回列表：从左侧滑回 */
+  const backFromCase = () => {
+    setCaseId(null)
+    setAnim({ key: view + ':x', dir: 'r' })
+  }
+
+  // 移动端横向手势：左滑切到下一个 tab / 打开下一块；右滑切上一个 tab / 从详情返回
+  const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
+  const onTouchStart = (e: TouchEvent) => {
+    // 编辑器/弹层打开时不响应手势，避免误触
+    if (editing !== undefined || editingIntake !== undefined || editingTimeline !== undefined || editingExpense !== undefined) {
+      touchStart.current = null
+      return
+    }
+    const t = e.touches[0]
+    touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const onTouchEnd = (e: TouchEvent) => {
+    const s = touchStart.current
+    touchStart.current = null
+    if (!s) return
+    const t = e.changedTouches[0]
+    const dx = t.clientX - s.x
+    const dy = t.clientY - s.y
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    // 必须横向主导且位移够大、速度够快，才当作切换手势（不干扰纵向滚动/拖拽）
+    if (adx < 64 || adx < ady * 1.3 || Date.now() - s.t > 800) return
+    if (caseId != null) {
+      if (dx > 0) backFromCase() // 详情页右滑 = 返回
+      return
+    }
+    const i = VIEW_ORDER.indexOf(view)
+    if (dx < 0 && i < VIEW_ORDER.length - 1) goto(VIEW_ORDER[i + 1])
+    else if (dx > 0 && i > 0) goto(VIEW_ORDER[i - 1])
   }
 
   // 案件保存后回写本地数据（demo 与 cloud 都走这一步，让 UI 立即反映）
@@ -238,14 +290,19 @@ function Shell() {
         createLabel={view === 'intakes' ? '新建接案' : '新建案件'}
       />
 
-      <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <main
+        className="flex-1 min-w-0 flex flex-col overflow-hidden swipe-x"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
         <VaultSetupGuide />
+        <div key={anim.key} className={`lw-anim-${anim.dir} flex-1 min-w-0 flex flex-col overflow-hidden`}>
         {caseId && current ? (
           <>
             <MobileBar
               title={current.client}
               subtitle={`${current.cause} · ${current.stage}`}
-              onBack={() => setCaseId(null)}
+              onBack={backFromCase}
               right={
                 <div className="flex items-center">
                   <button
@@ -270,7 +327,7 @@ function Shell() {
             <CaseDetail
               c={current}
               data={data}
-              onBack={() => setCaseId(null)}
+              onBack={backFromCase}
               onEdit={() => setEditing(current)}
               onCreateTimeline={() => setEditingTimeline(null)}
               onEditTimeline={(t) => setEditingTimeline(t)}
@@ -302,11 +359,11 @@ function Shell() {
             )}
           </>
         ) : view === 'dashboard' ? (
-          <Dashboard data={data} stats={stats} onOpenCase={setCaseId} onViewCases={() => goto('cases')} />
+          <Dashboard data={data} stats={stats} onOpenCase={openCase} onViewCases={() => goto('cases')} />
         ) : view === 'cases' ? (
-          <CaseList data={data} stats={stats} onOpenCase={setCaseId} onCreateCase={() => setEditing(null)} />
+          <CaseList data={data} stats={stats} onOpenCase={openCase} onCreateCase={() => setEditing(null)} />
         ) : view === 'expenses' ? (
-          <ExpenseTable data={data} onOpenCase={setCaseId} />
+          <ExpenseTable data={data} onOpenCase={openCase} />
         ) : view === 'intakes' ? (
           <IntakesList
             data={data}
@@ -314,17 +371,15 @@ function Shell() {
               const found = data.intakes.find((i) => i.id === id)
               if (found) setEditingIntake(found)
             }}
-            onOpenCase={(id) => {
-              setCaseId(id)
-              setView('cases')
-            }}
+            onOpenCase={(id) => openCase(id, 'cases')}
             onCreateIntake={() => setEditingIntake(null)}
           />
         ) : view === 'settings' ? (
           <Settings />
         ) : (
-          <MaterialsView data={data} onOpenCase={setCaseId} />
+          <MaterialsView data={data} onOpenCase={openCase} />
         )}
+        </div>
       </main>
 
       <BottomTabs view={view} onView={goto} />
