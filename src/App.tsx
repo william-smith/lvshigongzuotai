@@ -23,12 +23,27 @@ import { Settings } from './pages/Settings'
 import { deleteTimeline } from './lib/timelineOps'
 import { deleteExpense, decryptExpenses } from './lib/expenseOps'
 
+/** 刷新后恢复上次停留的界面（顶部 tab + 是否打开案件详情） */
+const VIEW_STATE_KEY = 'lw.view.v1'
+function loadViewState(): { view: ViewKey; caseId: number | null } {
+  try {
+    const raw = localStorage.getItem(VIEW_STATE_KEY)
+    if (!raw) return { view: 'dashboard', caseId: null }
+    const o = JSON.parse(raw) as { view?: unknown; caseId?: unknown }
+    const view = VIEW_ORDER.includes(o.view as ViewKey) ? (o.view as ViewKey) : 'dashboard'
+    const caseId = typeof o.caseId === 'number' ? o.caseId : null
+    return { view, caseId }
+  } catch {
+    return { view: 'dashboard', caseId: null }
+  }
+}
+
 function Shell() {
   const { session } = useAuth()
   const [data, setData] = useState<Dataset | null>(null)
   const [err, setErr] = useState('')
-  const [view, setView] = useState<ViewKey>('dashboard')
-  const [caseId, setCaseId] = useState<number | null>(null)
+  const [view, setView] = useState<ViewKey>(() => loadViewState().view)
+  const [caseId, setCaseId] = useState<number | null>(() => loadViewState().caseId)
   const [editing, setEditing] = useState<CaseRow | null | undefined>(undefined) // undefined=关闭，null=新建
   const [editingIntake, setEditingIntake] = useState<IntakeRow | null | undefined>(undefined)
   const [editingTimeline, setEditingTimeline] = useState<TimelineRow | null | undefined>(undefined)
@@ -69,6 +84,15 @@ function Shell() {
   useEffect(() => {
     if (authEnabled && !session) void clearCachedDataset()
   }, [session])
+
+  // 刷新后保留当前停留的界面（tab + 是否打开案件详情）
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_STATE_KEY, JSON.stringify({ view, caseId }))
+    } catch {
+      /* 隐私模式等忽略 */
+    }
+  }, [view, caseId])
 
   useEffect(() => {
     if (authEnabled && !session) return // 没登录就别去读数据，省得报一堆 401
