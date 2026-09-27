@@ -127,6 +127,53 @@ export async function signIn(email: string, password: string, remember = true): 
   return s
 }
 
+export interface SignUpResult {
+  /** Supabase 开了邮箱验证时为 true：用户还没真正登录，需先去邮箱点验证链接 */
+  needsConfirmation: boolean
+  email: string
+}
+
+/**
+ * 公开注册（GoTrue /signup）。与登录共用 timedFetch + netError。
+ * 成功后：
+ *   - 若项目开了「Confirm email」→ 返回 needsConfirmation=true，且当天拿不到会话，
+ *     必须去邮箱点验证链接后才能登录；
+ *   - 若未开邮箱验证 → 直接带着会话回来（本系统默认开启验证，走第一种）。
+ * 邮箱已存在 → Supabase 返回 422 / 400，按已有账号提示。
+ */
+export async function signUp(email: string, password: string): Promise<SignUpResult> {
+  if (!AUTH_BASE || !ANON_KEY) throw new Error('未配置 VITE_API_BASE')
+  let res: Response
+  try {
+    res = await timedFetch(`${AUTH_BASE}/signup`, {
+      method: 'POST',
+      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, gotrue_meta_security: { captcha_token: null } }),
+    })
+  } catch (e) {
+    throw netError(e)
+  }
+  const b = (await res.json().catch(() => ({}))) as TokenResp & {
+    confirmation_sent_at?: string
+    email_confirmed_at?: string
+  }
+  if (!res.ok) {
+    const raw = b.error_description || b.msg || b.error || ''
+    if (res.status === 422 || res.status === 400) {
+      if (raw.toLowerCase().includes('already') || raw.includes('registered') || raw.includes('exists'))
+        throw new Error('该邮箱已注册，请直接登录')
+      if (raw.includes('password')) throw new Error('密码强度不足（至少 6 位）')
+      throw new Error(raw || '注册失败，请稍后重试')
+    }
+    throw new Error(pickError(b, res.status))
+  }
+  const confirmed = Boolean(b.email_confirmed_at)
+  return {
+    needsConfirmation: !confirmed && Boolean(b.confirmation_sent_at),
+    email: b.user?.email || email,
+  }
+}
+
 export async function signOut(): Promise<void> {
   const s = readSession()
   writeSession(null)

@@ -90,17 +90,8 @@ function buildRow(
   }
 }
 
-/** cases 表主键是 bigint（非 bigserial），新建前先取 max(id)+1 */
-async function nextCaseId(): Promise<number> {
-  if (!BASE) throw new Error('API 未配置')
-  const res = await authedFetch(`${BASE}/cases?select=id&order=id.desc&limit=1`)
-  if (res.status === 401 || res.status === 403) {
-    throw new Error('登录已失效')
-  }
-  if (!res.ok) throw new Error(`查询 id 失败：${res.status}`)
-  const arr = (await res.json()) as { id: number }[]
-  return (arr[0]?.id ?? 0) + 1
-}
+// 主键改为数据库 identity 自增（见 supabase/multitenant_schema.sql）：新建不再客户端算 id，
+// 由 PostgREST 的 return=representation 直接取回库生成的 id，避免多租户下主键冲突。
 
 function assertOk(res: Response): void {
   if (res.status === 401 || res.status === 403) {
@@ -116,11 +107,23 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
   if (!isCloud) return { row, isNew }
 
   if (isNew) {
-    row.id = await nextCaseId()
+    // 不传 id：identity 列由数据库自动发号（生成值经 return=representation 回传）
     const res = await authedFetch(`${BASE}/cases`, {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ ...row, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+      body: JSON.stringify({
+        client: row.client,
+        cause: row.cause,
+        stage: row.stage,
+        stage_norm: row.stage_norm,
+        next_action: row.next_action,
+        next_due: row.next_due,
+        first_contact: row.first_contact,
+        signed_at: row.signed_at,
+        detail_mask: row.detail_mask,
+        detail_enc: row.detail_enc,
+        has_secret: row.has_secret,
+      }),
     })
     assertOk(res)
     if (!res.ok) {

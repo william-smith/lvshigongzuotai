@@ -123,17 +123,7 @@ function buildRow(
   }
 }
 
-/** expenses 表主键是 bigint（非 bigserial），新建前先取 max(id)+1 */
-async function nextExpenseId(): Promise<number> {
-  if (!BASE) throw new Error('API 未配置')
-  const res = await authedFetch(`${BASE}/expenses?select=id&order=id.desc&limit=1`)
-  if (res.status === 401 || res.status === 403) {
-    throw new Error('登录已失效')
-  }
-  if (!res.ok) throw new Error(`查询 id 失败：${res.status}`)
-  const arr = (await res.json()) as { id: number }[]
-  return (arr[0]?.id ?? 0) + 1
-}
+// 主键改为数据库 identity 自增（见 supabase/multitenant_schema.sql）：新建不再客户端算 id。
 
 function assertOk(res: Response): void {
   if (res.status === 401 || res.status === 403) {
@@ -150,12 +140,11 @@ export async function saveExpense(draft: ExpenseDraft, key: CryptoKey | null): P
   if (!isCloud) return { row, isNew }
 
   if (isNew) {
-    row.id = await nextExpenseId()
+    // 不传 id：identity 列由数据库自动发号
     const res = await authedFetch(`${BASE}/expenses`, {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify({
-        id: row.id,
         case_id: row.case_id,
         direction: row.direction,
         category: row.category,
@@ -166,7 +155,6 @@ export async function saveExpense(draft: ExpenseDraft, key: CryptoKey | null): P
         detail_enc: row.detail_enc,
         amount_enc: row.amount_enc,
         personal_enc: row.personal_enc,
-        created_at: new Date().toISOString(),
       }),
     })
     assertOk(res)
