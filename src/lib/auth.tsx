@@ -75,13 +75,46 @@ function pickError(b: TokenResp, status: number): string {
   return raw || `登录失败（HTTP ${status}）`
 }
 
+/** 请求超时（毫秒）。网络不通 / 后端不可达时，不让界面无限转圈。 */
+const REQ_TIMEOUT_MS = 15_000
+
+/**
+ * 带超时的 fetch：超过 REQ_TIMEOUT_MS 自动 abort，让上层能给出明确的中文物。
+ * 原生 fetch 在 DNS 失败 / 连接被拒 / SNI 拦截时可能卡很久才失败，登录与点数据都靠它。
+ */
+async function timedFetch(url: string, init: RequestInit): Promise<Response> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), REQ_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 把 fetch 的网络异常 / 超时翻译成用户能看懂的中文提示。 */
+function netError(e: unknown): Error {
+  if (e instanceof DOMException && e.name === 'AbortError') {
+    return new Error('连接超时，请检查网络或后端地址后重试')
+  }
+  if (e instanceof TypeError) {
+    return new Error('网络连接失败，请检查网络后重试')
+  }
+  return e instanceof Error ? e : new Error('网络异常，请稍后重试')
+}
+
 export async function signIn(email: string, password: string, remember = true): Promise<Session> {
   if (!AUTH_BASE || !ANON_KEY) throw new Error('未配置 VITE_API_BASE')
-  const res = await fetch(`${AUTH_BASE}/token?grant_type=password`, {
-    method: 'POST',
-    headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
+  let res: Response
+  try {
+    res = await timedFetch(`${AUTH_BASE}/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+  } catch (e) {
+    throw netError(e)
+  }
   const b = (await res.json().catch(() => ({}))) as TokenResp
   if (!res.ok || !b.access_token) throw new Error(pickError(b, res.status))
   const s: Session = {
@@ -182,7 +215,7 @@ export async function getAccessToken(force = false): Promise<string | null> {
     refreshing = (async () => {
       let res: Response
       try {
-        res = await fetch(`${AUTH_BASE}/token?grant_type=refresh_token`, {
+        res = await timedFetch(`${AUTH_BASE}/token?grant_type=refresh_token`, {
           method: 'POST',
           headers: { apikey: ANON_KEY as string, 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: usedRefresh }),
@@ -234,7 +267,7 @@ export async function authedFetch(input: string, init: RequestInit = {}, retried
     apikey: (ANON_KEY as string) ?? '',
     Authorization: `Bearer ${token ?? ANON_KEY ?? ''}`,
   }
-  const res = await fetch(input, { ...init, headers })
+  const res = await timedFetch(input, { ...init, headers })
   if (res.status === 401 || res.status === 403) {
     if (!retried) {
       const cur = readSession()?.access_token
