@@ -56,7 +56,7 @@ function toForm(c: CaseRow | null): FormState {
 }
 
 export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props) {
-  const { key, requestUnlock } = useVault()
+  const { key, requestUnlock, ensureUnlocked } = useVault()
   const [form, setForm] = useState<FormState>(() => toForm(initial))
   const [detailChanged, setDetailChanged] = useState(false)
   const [decrypting, setDecrypting] = useState(false)
@@ -72,7 +72,8 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
   // 解锁后把「详细情况」换成解密原文
   useEffect(() => {
     let cancelled = false
-    if (!key || !initial?.detail_enc) return
+    // 用户已自行编辑过该字段：保留其输入，不再用密文原文覆盖（否则解锁会冲掉刚填的内容）
+    if (!key || !initial?.detail_enc || detailChanged) return
     setDecrypting(true)
     decryptString(key, initial.detail_enc)
       .then((plain) => {
@@ -87,7 +88,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
     return () => {
       cancelled = true
     }
-  }, [key, initial?.detail_enc])
+  }, [key, initial?.detail_enc, detailChanged])
 
   // ESC 关闭
   useEffect(() => {
@@ -130,12 +131,21 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
           '建议先取消，点「解锁」后再编辑。\n\n仍要继续保存吗？',
       )
       if (!go) return
-    } else if (detailSensitive && !key) {
-      const go = window.confirm(
-        '检测到「详细情况」里含手机号或身份证号。\n' +
-          '未解锁时只保存打码版本（如 138****5678），完整号码不会上传。\n\n是否继续保存？',
-      )
-      if (!go) return
+    }
+
+    // 含敏感信息但保险箱还没就绪：先确保有密钥（首次设置或解锁），否则刚才输入的
+    // 完整号码只会存成打码版、永久丢失。用户取消设置则退回「打码版保存」的二次确认。
+    let effectiveKey: CryptoKey | null = key
+    if (detailSensitive && !key) {
+      const k = await ensureUnlocked()
+      if (k) {
+        effectiveKey = k
+      } else {
+        const go = window.confirm(
+          '未设置保险箱口令，将以打码版保存（完整号码不会上传）。\n\n仍要继续保存吗？',
+        )
+        if (!go) return
+      }
     }
 
     setSaving(true)
@@ -154,7 +164,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
         detailChanged,
         originalEnc: initial?.detail_enc ?? null,
       }
-      const { row, isNew } = await saveCase(draft, key)
+      const { row, isNew } = await saveCase(draft, effectiveKey)
       onSaved(row, isNew)
     } catch (e) {
       setErr((e as Error).message || '保存失败')

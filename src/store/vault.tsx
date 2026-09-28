@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   deriveKey,
   lockSession,
@@ -31,6 +31,10 @@ interface VaultState {
   forceReauth: () => void
   closeUnlock: () => void
   setVerifier: (token: string | null | undefined) => void
+  /** 确保已解锁（有密钥）：已解锁直接返回当前密钥；否则弹出解锁/首次设置框，
+   *  用户完成设置/解锁后返回密钥。用户取消则返回 null。用于保存含敏感信息的输入前，
+   *  避免「未解锁时只存打码版、完整信息永久丢失」的静默数据丢失。 */
+  ensureUnlocked: () => Promise<CryptoKey | null>
 }
 
 const Ctx = createContext<VaultState | null>(null)
@@ -43,6 +47,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [unlockOpen, setUnlockOpen] = useState(false)
+
+  /** 等待「解锁/首次设置」完成的回调队列：ensureUnlocked 把 resolve 推进来，
+   *  密钥就绪（或用户取消）时统一兑现。 */
+  const resolversRef = useRef<((k: CryptoKey | null) => void)[]>([])
+
+  // 密钥一旦就绪（解锁成功 / 持久密钥静默恢复 / 首次设置成功），兑现所有挂起的 ensureUnlocked
+  useEffect(() => {
+    if (key && resolversRef.current.length) {
+      resolversRef.current.forEach((r) => r(key))
+      resolversRef.current = []
+    }
+  }, [key])
 
   useEffect(() => {
     restoreKey()
@@ -107,9 +123,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setUnlockOpen(true)
   }, [])
   const closeUnlock = useCallback(() => {
+    if (resolversRef.current.length) {
+      resolversRef.current.forEach((r) => r(null))
+      resolversRef.current = []
+    }
     setUnlockOpen(false)
     setError('')
   }, [])
+
+  /** 确保有可用密钥：已解锁直接返回当前密钥；否则弹出解锁/首次设置框，密钥就绪后返回。
+   *  用户取消（关闭弹框）返回 null，调用方可据此中止保存，避免静默存打码版导致信息丢失。 */
+  const ensureUnlocked = useCallback((): Promise<CryptoKey | null> => {
+    if (key) return Promise.resolve(key)
+    return new Promise<CryptoKey | null>((resolve) => {
+      resolversRef.current.push(resolve)
+      void requestUnlock()
+    })
+  }, [key, requestUnlock])
 
   // 首次设置保险箱口令：无需旧口令，初始化云端 verifier 并把密钥留本机
   const setup = useCallback(async (passphrase: string, remember: boolean) => {
@@ -165,8 +195,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       forceReauth,
       closeUnlock,
       setVerifier,
+      ensureUnlocked,
     }),
-    [key, ready, verifierResolved, verifier, busy, error, unlockOpen, unlock, setup, lock, requestUnlock, forceReauth, closeUnlock, setVerifier],
+    [key, ready, verifierResolved, verifier, busy, error, unlockOpen, unlock, setup, lock, requestUnlock, forceReauth, closeUnlock, setVerifier, ensureUnlocked],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
