@@ -271,9 +271,7 @@ export function CaseList({
                   onSort={onSort}
                   className="text-left font-medium px-3 py-2.5 w-28"
                 />
-                <th className="text-left font-medium px-3 py-2.5 w-20">期限</th>
-                <th className="text-left font-medium px-3 py-2.5 w-16">承办</th>
-              </tr>
+                <th className="text-left font-medium px-3 py-2.5 w-20">期限</th>              </tr>
             </thead>
             <tbody>
               {pageRows.map((c) => (
@@ -301,13 +299,11 @@ export function CaseList({
                 <td className="px-3 py-3 text-ink-2 text-xs">{fmtDateTime(c.next_due)}</td>
                 <td className="px-3 py-3">
                   <DueTag due={isTerminal(c) ? null : c.next_due} />
-                </td>
-                  <td className="px-3 py-3 text-ink-3 text-xs">景</td>
-                </tr>
+                </td>                </tr>
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-16 text-center text-ink-3 text-sm">
+                  <td colSpan={6} className="px-4 py-16 text-center text-ink-3 text-sm">
                     没有符合条件的案件
                   </td>
                 </tr>

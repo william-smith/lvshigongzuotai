@@ -13,9 +13,12 @@ export function Dashboard({
   onOpenCase: (id: number) => void
   onViewCases: () => void
 }) {
-  const { logout } = useAuth()
+  const { logout, profile, email } = useAuth()
   const today = new Date()
   const dateStr = `${today.getMonth() + 1}月${today.getDate()}日`
+  // 头像首字：优先律师姓名，其次邮箱首字母（与侧栏保持一致），不再写死
+  const myName = profile?.lawyer_name?.trim() ?? ''
+  const avatar = myName ? myName.slice(0, 1) : email ? email.slice(0, 1).toUpperCase() : '?'
 
   const confirmLogout = () => {
     if (confirm('退出登录后需要重新输入邮箱密码，确定吗？')) void logout()
@@ -55,7 +58,7 @@ export function Dashboard({
             title={authEnabled ? '退出登录' : '本地演示模式'}
             className="w-9 h-9 rounded-full bg-brand-soft text-brand text-sm flex items-center justify-center"
           >
-            {authEnabled ? '景' : <Icon name="device" className="w-4 h-4" />}
+            {authEnabled ? avatar : <Icon name="device" className="w-4 h-4" />}
           </button>
         </div>
 
