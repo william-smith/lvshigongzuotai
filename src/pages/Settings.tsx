@@ -1,7 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
-import { authEnabled, changePassword, useAuth } from '../lib/auth'
+import { authEnabled, changePassword, isNasRole, useAuth } from '../lib/auth'
 import { isCloud } from '../lib/data'
+import {
+  activeBackend,
+  clearCustom,
+  customConfigured,
+  readCustom,
+  setBackend,
+  writeCustom,
+  type BackendId,
+} from '../lib/apiConfig'
 import { deriveKey, persistKey, verifyKey } from '../lib/crypto'
 import { reencryptVault } from '../lib/vault'
 
@@ -110,6 +119,127 @@ function ProfileCard() {
         {busy ? '正在保存…' : '保存律师信息'}
       </button>
     </form>
+  )
+}
+
+/**
+ * 数据源（后端）卡 —— **仅 role=nas 的账号可见**。
+ *
+ * 正常律师一律用云端公开库（多租户 + RLS 行级隔离）。
+ * 具备 nas 角色的账号可额外切到自己搭建的自建库：地址与 anon key 由本人填写，
+ * 只写进本人浏览器的 localStorage，**不进公开构建包**，也不会上传给任何人。
+ */
+function BackendCard() {
+  const [backend, setB] = useState<BackendId>('cloud')
+  const [base, setBase] = useState('')
+  const [key, setKey] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setB(activeBackend())
+    const c = readCustom()
+    setBase(c.base)
+    setKey(c.key)
+  }, [])
+
+  const configured = customConfigured()
+
+  function saveCustom() {
+    writeCustom({ base: base.trim(), key: key.trim() })
+    setSaved(true)
+    window.setTimeout(() => setSaved(false), 2000)
+  }
+
+  /** 切换后端：写选择后整页刷新，让各数据模块在顶层重新解析生效地址 */
+  function switchTo(id: BackendId) {
+    setBackend(id)
+    window.location.reload()
+  }
+
+  function forget() {
+    clearCustom()
+    setBase('')
+    setKey('')
+    window.location.reload()
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-white p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Icon name="cloud" className="w-4 h-4 text-ink-2" />
+        <div className="text-sm font-semibold text-ink">数据存放位置</div>
+        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-brand/10 text-brand">
+          当前：{backend === 'custom' ? '自建库' : '云端公开库'}
+        </span>
+      </div>
+      <p className="text-xs text-ink-3 leading-relaxed mb-4">
+        默认使用云端公开库（每个律师只能看到自己的数据）。如需改用你自行搭建的自建库，请在下方填写它的地址与密钥——
+        这两项<strong className="text-ink-2">只保存在你本机浏览器</strong>，不会写入应用、也不会上传。
+      </p>
+
+      <div className="space-y-2 mb-4">
+        <button
+          type="button"
+          onClick={() => switchTo('cloud')}
+          className={`w-full text-left rounded-lg border px-3.5 py-3 transition-colors ${
+            backend === 'cloud' ? 'border-brand bg-brand/5' : 'border-line hover:bg-canvas'
+          }`}
+        >
+          <div className="text-sm font-medium text-ink">云端公开库</div>
+          <div className="text-xs text-ink-3 mt-0.5">多租户，按账号行级隔离（推荐，默认）</div>
+        </button>
+        <button
+          type="button"
+          disabled={!configured}
+          onClick={() => switchTo('custom')}
+          className={`w-full text-left rounded-lg border px-3.5 py-3 transition-colors disabled:opacity-50 ${
+            backend === 'custom' ? 'border-brand bg-brand/5' : 'border-line hover:bg-canvas'
+          }`}
+        >
+          <div className="text-sm font-medium text-ink">自建库（自行搭建）</div>
+          <div className="text-xs text-ink-3 mt-0.5">
+            {configured ? '已填写，可切换到此库' : '需先在下方填写地址与密钥'}
+          </div>
+        </button>
+      </div>
+
+      <div className="space-y-3 border-t border-line pt-4">
+        <div>
+          <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 REST 地址</label>
+          <input
+            value={base}
+            onChange={(e) => setBase(e.target.value)}
+            placeholder="https://你的反代域名/rest/v1"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 anon key</label>
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={saveCustom}
+            className="px-3.5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:opacity-90"
+          >
+            {saved ? '已保存' : '保存'}
+          </button>
+          <button
+            type="button"
+            onClick={forget}
+            className="px-3.5 py-2 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas"
+          >
+            清除并回到云端
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -304,6 +434,17 @@ export function Settings() {
             </div>
           )}
         </Section>
+
+        {/* 数据源：仅 role=nas 的账号可见（普通律师一律走云端公开库） */}
+        {isNasRole() && (
+          <Section
+            icon="cloud"
+            title="数据源"
+            desc="切换数据存放位置。自建库由你自行搭建，地址与密钥只保存在本机浏览器。"
+          >
+            <BackendCard />
+          </Section>
+        )}
 
         {/* 安全 */}
         <Section icon="lock" title="安全" desc="敏感字段加密口令与账号安全说明。">

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { resolveApi } from './apiConfig'
 
 /**
  * 登录：走 Supabase Auth 的标准 REST（GoTrue），同样不绑定 SDK。
@@ -6,8 +7,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
  * 这样数据库的行级安全就能认出「你是谁」，未登录的人一条都读不到。
  */
 
-const REST_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) || '').replace(/\/+$/, '')
-const ANON_KEY = import.meta.env.VITE_API_KEY as string | undefined
+/**
+ * 生效后端：默认云端公开库（多租户）；role=nas 且本人填过自建库并显式切换时才走自建库。
+ * 模块顶层解析一次，切换后端由 Settings 写入 localStorage 后整页刷新生效。
+ */
+const { base: REST_BASE, key: ANON_KEY } = resolveApi()
 const AUTH_BASE = REST_BASE ? REST_BASE.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : ''
 
 /** 只有接了云端才需要登录；本地演示数据直接放行 */
@@ -20,6 +24,45 @@ export interface Session {
   refresh_token: string
   expires_at: number
   email: string
+}
+
+/** base64url → UTF-8 JSON（JWT payload 里可能有中文，不能直接 atob 后 JSON.parse） */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const b64 = token.split('.')[1]
+    if (!b64) return null
+    const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'))
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** 从 JWT 读角色：app_metadata.role 优先，其次 user_metadata.role */
+function roleFromJwt(token: string): string | null {
+  const p = decodeJwtPayload(token)
+  if (!p) return null
+  const appMeta = p.app_metadata as { role?: string } | undefined
+  const userMeta = p.user_metadata as { role?: string } | undefined
+  return appMeta?.role ?? userMeta?.role ?? null
+}
+
+/**
+ * 当前登录账号的角色；未登录返回 null。
+ *
+ * 角色由服务端签发进 JWT（app_metadata.role），前端**只读不写**。
+ * 注意：前端据此隐藏入口只是体验层面的收敛，真正的权限边界仍在服务端 RLS / 鉴权。
+ */
+export function currentRole(): string | null {
+  const s = readSession()
+  return s ? roleFromJwt(s.access_token) : null
+}
+
+/** 是否具备「切换到自己自建库」的角色（role === 'nas'） */
+export function isNasRole(): boolean {
+  return currentRole() === 'nas'
 }
 
 const TEMP = 'lw.auth.temp'

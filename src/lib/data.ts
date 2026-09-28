@@ -1,4 +1,5 @@
 import { authedFetch } from './auth'
+import { resolveApi } from './apiConfig'
 import type { CaseRow, Dataset, ExpenseRow, IntakeRow, MaterialRow, TimelineRow } from './types'
 
 /**
@@ -13,8 +14,8 @@ import type { CaseRow, Dataset, ExpenseRow, IntakeRow, MaterialRow, TimelineRow 
  * 不填 VITE_API_BASE 时，使用本地演示数据，无需建库。
  */
 
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
-const KEY = import.meta.env.VITE_API_KEY as string | undefined
+/** 生效后端：默认云端公开库；role=nas 用户切到自填自建库后这里即为该库 */
+const { base: BASE, key: KEY } = resolveApi()
 
 export const isCloud = Boolean(BASE && KEY)
 
