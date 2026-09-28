@@ -184,19 +184,6 @@ export function Sidebar({
             </button>
           )
         })}
-        <div className="pt-3 mt-3 border-t border-white/10 space-y-0.5">
-          {[{ label: '归档卷宗', icon: 'archive' as IconName }].map((it) => (
-            <button
-              key={it.label}
-              disabled
-              className="w-full h-9 px-3 rounded-lg flex items-center gap-2.5 text-sm text-white/25 cursor-not-allowed"
-            >
-              <Icon name={it.icon} className="w-4 h-4" />
-              <span className="flex-1 text-left">{it.label}</span>
-              <span className="text-[10px]">待建</span>
-            </button>
-          ))}
-        </div>
       </nav>
       <SyncCard />
       <div className="px-4 h-14 flex items-center gap-2.5 border-t border-white/10 shrink-0">

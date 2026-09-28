@@ -26,6 +26,7 @@ export type IconName =
   | 'logout'
   | 'money'
   | 'user'
+  | 'sync'
 
 const paths: Record<IconName, string> = {
   home: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
@@ -62,6 +63,7 @@ const paths: Record<IconName, string> = {
     'M3 8h18a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM9 11.5l3 3 3-3M12 14.5V11M9.5 13h5',
   // 账户：圆形头像 + 肩线
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0',
+  sync: 'M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4',
 }
 
 export function Icon({

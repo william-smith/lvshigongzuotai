@@ -11,6 +11,7 @@ import {
   writeCustom,
   type BackendId,
 } from '../lib/apiConfig'
+import { DataSync } from '../components/DataSync'
 import { deriveKey, persistKey, verifyKey } from '../lib/crypto'
 import { reencryptVault } from '../lib/vault'
 
@@ -443,6 +444,7 @@ export function Settings() {
             desc="切换数据存放位置。自建库由你自行搭建，地址与密钥只保存在本机浏览器。"
           >
             <BackendCard />
+            <DataSync />
           </Section>
         )}
 
