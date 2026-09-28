@@ -26,6 +26,14 @@ export interface SyncEndpoint {
    * 无需把短期 token 登记进 kong 白名单。
    */
   anonKey?: string
+  /**
+   * 仅「多租户云端库」一侧需要填：只同步 user_id = 该 uid 的行。
+   *
+   * 为什么必须有：同步用 service_role，会**绕过 RLS**。云端库是所有律师共用的，
+   * 不带上自己的 uid 就会把别人的案件整表拉进你的自建库（隔离穿透）。
+   * 自建库是你自己的，全表都是本人的，因此**不要**给它设这个值。
+   */
+  scopeUid?: string
 }
 
 export const SYNC_TABLES = [
@@ -100,6 +108,10 @@ export type CaseNameMap = Map<string, string>
 /** 一次同步内部的共享上下文 */
 export interface SyncShared {
   caseNames: CaseNameMap
+  /** 云端侧本人拥有的案件 id（子表按父表归属过滤用） */
+  ownedCaseIds?: Set<string>
+  /** 云端侧本人拥有的接案线索 id */
+  ownedIntakeIds?: Set<string>
 }
 
 export interface SyncReport {
@@ -121,6 +133,13 @@ type Row = Record<string, unknown>
 const PK = 'id'
 const CHUNK = 200
 
+/**
+ * 带 user_id 列的「根表」——多租户库可按 user_id 精确过滤。
+ * 子表（contacts / timeline / expenses / materials / case_folders）没有该列，
+ * 只能按父表归属二次过滤（见 filterCloudRows）。
+ */
+const SCOPED_TABLES = new Set<SyncTable>(['cases', 'intakes', 'vault_meta'])
+
 function headers(ep: SyncEndpoint): Record<string, string> {
   return {
     apikey: ep.anonKey || ep.token,
@@ -134,7 +153,9 @@ function cleanBase(base: string): string {
 }
 
 async function fetchAll(ep: SyncEndpoint, table: SyncTable): Promise<Row[]> {
-  const res = await fetch(`${cleanBase(ep.base)}/${table}?select=*`, { headers: headers(ep) })
+  // 多租户库 + 根表 → 只取归属本人的行
+  const scope = ep.scopeUid && SCOPED_TABLES.has(table) ? `&user_id=eq.${ep.scopeUid}` : ''
+  const res = await fetch(`${cleanBase(ep.base)}/${table}?select=*${scope}`, { headers: headers(ep) })
   if (!res.ok) {
     const t = await res.text().catch(() => '')
     const hint = res.status === 401 ? '（token 无效或已过期，请重新生成）' : ''
@@ -159,9 +180,9 @@ async function upsert(ep: SyncEndpoint, table: SyncTable, rows: Row[]): Promise<
 }
 
 /** 行内容的稳定指纹（键排序后序列化），用于判断两边是否真的不同。
- *  owner_id 是「实例本地」字段（各库 auth.uid() 不同），不参与两边比对，
+ *  user_id 是「实例本地」字段（各库 auth.uid() 不同），不参与两边比对，
  *  否则同一条数据会因 uid 不同被误判为「两边都改过」→ 冲突。 */
-const LOCAL_KEYS = new Set(['owner_id'])
+const LOCAL_KEYS = new Set(['user_id'])
 
 function fingerprint(r: Row): string {
   return JSON.stringify(
@@ -177,25 +198,25 @@ function filledCount(r: Row): number {
     .length
 }
 
-/** 从一行集合里取一个现成的 owner_id 样本（目标库自己的 uid） */
+/** 从一行集合里取一个现成的 user_id 样本（目标库自己的 uid） */
 function sampleUid(rows: Row[]): string | null {
   for (const r of rows) {
-    const v = r['owner_id']
+    const v = r['user_id']
     if (typeof v === 'string' && v) return v
   }
   return null
 }
 
-/** 写入前兜底 owner_id：缺失/为空时用目标库现有 uid 补上；
+/** 写入前兜底 user_id：缺失/为空时用目标库现有 uid 补上；
  *  service_role 下 auth.uid() 为 null，列默认值救不了，必须显式带值。
  *  目标库没有样本（空表）时只能删键交给默认值——若仍 NOT NULL 会在报错中显示列名。 */
 function withOwner(rows: Row[], uid: string | null): Row[] {
   return rows.map((r) => {
-    const v = r['owner_id']
+    const v = r['user_id']
     if (typeof v === 'string' && v) return r
-    if (uid) return { ...r, owner_id: uid }
+    if (uid) return { ...r, user_id: uid }
     const rest = { ...r }
-    delete rest['owner_id']
+    delete rest['user_id']
     return rest
   })
 }
@@ -269,7 +290,7 @@ function rowSummary(row: Row, table: SyncTable): string {
   return ''
 }
 
-/** 逐字段对比两侧取值（不含 owner_id 等本地字段） */
+/** 逐字段对比两侧取值（不含 user_id 等本地字段） */
 function diffFields(a: Row, b: Row): FieldDiff[] {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)])
   return [...keys]
@@ -310,6 +331,40 @@ function whichNewer(a: Row, b: Row, col: string | null): 'a' | 'b' | null {
   return null
 }
 
+/**
+ * 云端侧（多租户库）行过滤 —— 隔离的关键一环。
+ *
+ *  - 根表：已在 fetchAll 里按 user_id 过滤，这里顺便登记本人拥有的 id；
+ *  - 子表：没有 user_id 列，按父表（case_id / intake_id）归属过滤。
+ *    不做这步的话，别人案件下的时间线/费用行会被拉进来，甚至因主键撞号挂到你的案件上。
+ */
+function filterCloudRows(
+  rows: Row[],
+  table: SyncTable,
+  scopeUid: string | undefined,
+  shared: SyncShared,
+): Row[] {
+  if (!scopeUid) return rows
+  if (table === 'cases') {
+    shared.ownedCaseIds = new Set(rows.map((r) => String(r[PK])))
+    return rows
+  }
+  if (table === 'intakes') {
+    shared.ownedIntakeIds = new Set(rows.map((r) => String(r[PK])))
+    return rows
+  }
+  if (table === 'vault_meta') return rows
+  const ownedC = shared.ownedCaseIds
+  const ownedI = shared.ownedIntakeIds
+  return rows.filter((r) => {
+    const cid = r['case_id']
+    if (cid != null && ownedC?.has(String(cid))) return true
+    const iid = r['intake_id']
+    if (iid != null && ownedI?.has(String(iid))) return true
+    return false
+  })
+}
+
 async function syncTable(
   cloud: SyncEndpoint,
   nas: SyncEndpoint,
@@ -328,7 +383,9 @@ async function syncTable(
   const conflictRows: ConflictDetail[] = []
   const caseNames = shared.caseNames
 
-  const [cRows, nRows] = await Promise.all([fetchAll(cloud, table), fetchAll(nas, table)])
+  const [cRowsAll, nRows] = await Promise.all([fetchAll(cloud, table), fetchAll(nas, table)])
+  // 云端若为多租户库：根表已按 user_id 过滤，子表再按父表归属过滤
+  const cRows = filterCloudRows(cRowsAll, table, cloud.scopeUid, shared)
 
   const cMap = new Map<string, Row>()
   for (const r of cRows) cMap.set(String(r[PK]), r)
@@ -380,7 +437,10 @@ async function syncTable(
   }
 
   if (toNas.length) await upsert(nas, table, withOwner(toNas, sampleUid(nRows)))
-  if (toCloud.length) await upsert(cloud, table, withOwner(toCloud, sampleUid(cRows)))
+  // 写回多租户云端时显式带上自己的 uid（service_role 下 auth.uid() 为 null，列默认值救不了）。
+  // 仅限有 user_id 列的根表——子表加上该字段会被 PostgREST 以「列不存在」拒绝。
+  const cloudUid = SCOPED_TABLES.has(table) ? cloud.scopeUid || sampleUid(cRows) : sampleUid(cRows)
+  if (toCloud.length) await upsert(cloud, table, withOwner(toCloud, cloudUid))
 
   return { stat, written: toNas.length + toCloud.length, conflictRows }
 }

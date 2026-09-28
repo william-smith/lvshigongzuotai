@@ -65,6 +65,20 @@ export function isNasRole(): boolean {
   return currentRole() === 'nas'
 }
 
+/**
+ * 当前登录账号的 uid（JWT 的 sub 声明）；未登录返回 null。
+ *
+ * 同步到多租户云端库时要带上它，只取归属自己的行——
+ * 否则用 service_role 绕开 RLS 会把所有律师的数据整表拉走。
+ */
+export function currentUserId(): string | null {
+  const s = readSession()
+  if (!s) return null
+  const p = decodeJwtPayload(s.access_token)
+  const sub = p?.sub
+  return typeof sub === 'string' && sub ? sub : null
+}
+
 const TEMP = 'lw.auth.temp'
 
 function parse(raw: string | null): Session | null {

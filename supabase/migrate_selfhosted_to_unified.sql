@@ -79,6 +79,7 @@ do $$
 declare
   owner_email text := '你的邮箱@example.com';
   owner_uid   uuid;
+  t           text;
 begin
   select id into owner_uid from auth.users where email = owner_email limit 1;
   if owner_uid is null then
@@ -86,25 +87,36 @@ begin
   end if;
   raise notice '归属账号 uid = %', owner_uid;
 
-  -- cases
-  alter table public.cases   add column if not exists user_id uuid;
-  update public.cases   set user_id = owner_uid where user_id is null;
-  alter table public.cases   alter column user_id set default auth.uid();
-  alter table public.cases   alter column user_id set not null;
+  foreach t in array array['cases','intakes','vault_meta']
+  loop
+    -- 旧 schema 用的是 owner_id，统一版用 user_id：有前者就改名（数据原样保留），
+    -- 千万别再 add 一个新列，否则两列并存、RLS 只认 user_id 会读到空值。
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema='public' and table_name=t and column_name='owner_id'
+    ) and not exists (
+      select 1 from information_schema.columns
+      where table_schema='public' and table_name=t and column_name='user_id'
+    ) then
+      execute format('alter table public.%I rename column owner_id to user_id', t);
+      raise notice '%：owner_id 已改名为 user_id（数据保留）', t;
+    end if;
 
-  -- intakes
-  alter table public.intakes add column if not exists user_id uuid;
-  update public.intakes set user_id = owner_uid where user_id is null;
-  alter table public.intakes alter column user_id set default auth.uid();
-  alter table public.intakes alter column user_id set not null;
+    -- 两个都没有（更老的结构）才新增
+    if not exists (
+      select 1 from information_schema.columns
+      where table_schema='public' and table_name=t and column_name='user_id'
+    ) then
+      execute format('alter table public.%I add column user_id uuid', t);
+      raise notice '%：已新增 user_id 列', t;
+    end if;
 
-  -- vault_meta（每用户一条）
-  alter table public.vault_meta add column if not exists user_id uuid;
-  update public.vault_meta set user_id = owner_uid where user_id is null;
-  alter table public.vault_meta alter column user_id set default auth.uid();
-  alter table public.vault_meta alter column user_id set not null;
-
-  raise notice 'user_id 回填完成';
+    -- 回填历史行 + 设默认值与非空
+    execute format('update public.%I set user_id = $1 where user_id is null', t) using owner_uid;
+    execute format('alter table public.%I alter column user_id set default auth.uid()', t);
+    execute format('alter table public.%I alter column user_id set not null', t);
+    raise notice '%：user_id 回填完成', t;
+  end loop;
 end $$;
 
 create index if not exists idx_cases_user   on public.cases (user_id);

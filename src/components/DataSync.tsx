@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Icon } from './Icon'
 import { runSync, type SyncReport, type TableSyncStat } from '../lib/syncOps'
 import { readCustom } from '../lib/apiConfig'
+import { currentUserId } from '../lib/auth'
 
 /**
  * 云端公开库 ↔ 自建库 的双向增量同步（仅 role=nas 的账号可见）。
@@ -51,7 +52,14 @@ export function DataSync() {
     setReport(null)
     try {
       const r = await runSync(
-        { base: cloudBase, token: cloudToken.trim(), anonKey: CLOUD_ANON || undefined },
+        // 云端是所有律师共用的多租户库：必须带上自己的 uid，只同步归属自己的行
+        {
+          base: cloudBase,
+          token: cloudToken.trim(),
+          anonKey: CLOUD_ANON || undefined,
+          scopeUid: currentUserId() ?? undefined,
+        },
+        // 自建库是本人独用，全表都是自己的，不做归属过滤
         { base: nasBase, token: nasToken.trim(), anonKey: readCustom().key || undefined },
         (s) => setLog((l) => [...l, s]),
       )
