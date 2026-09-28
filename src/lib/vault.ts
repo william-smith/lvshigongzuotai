@@ -9,7 +9,7 @@ import {
   verifyKey,
   VERIFIER_PLAIN,
 } from './crypto'
-import { authedFetch } from './auth'
+import { authedFetch, currentUserId } from './auth'
 
 export interface ReEncProgress {
   done: number
@@ -56,6 +56,31 @@ async function patchRow(table: string, id: number, patch: Record<string, unknown
   }
   if (!res.ok)
     throw new Error(`更新 ${table} ${id} 失败：${res.status}：${(await res.text().catch(() => '')).slice(0, 120)}`)
+}
+
+/**
+ * 更新「自己那一条」保险箱元数据 —— 按 user_id 定位。
+ *
+ * 为什么不能按 id=1：那是单人时代的写法。多租户库里 id=1 属于最先建保险箱的人，
+ * 别人按 id=1 去改，要么撞主键、要么被 RLS 拒绝（RLS 只允许改 user_id = 自己的行），
+ * 表现就是「设置敏感信息密码失败」。
+ */
+async function patchVaultMeta(patch: Record<string, unknown>): Promise<void> {
+  if (!API_BASE) return
+  const uid = currentUserId()
+  if (!uid) throw new Error('尚未登录')
+  const res = await authedFetch(`${API_BASE}/vault_meta?user_id=eq.${uid}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify(patch),
+  })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('登录已失效，请重新登录')
+  }
+  if (!res.ok)
+    throw new Error(
+      `更新保险箱元数据失败：${res.status}：${(await res.text().catch(() => '')).slice(0, 120)}`,
+    )
 }
 
 /** 把一批异步任务按并发上限执行，避免一次性打爆连接 */
@@ -157,7 +182,7 @@ export async function reencryptVault(
 
   tasks.push(async () => {
     try {
-      await patchRow('vault_meta', 1, { verifier_enc: newVerifier })
+      await patchVaultMeta({ verifier_enc: newVerifier })
     } catch {
       failed++
     }
@@ -171,7 +196,10 @@ export async function reencryptVault(
 }
 
 /**
- * 首次设置保险箱口令：本机派生密钥 → 生成校验串 → 写入云端 vault_meta（upsert id=1）。
+ * 首次设置保险箱口令：本机派生密钥 → 生成校验串 → 写入云端 vault_meta。
+ *
+ * 按 **user_id** 定位自己的那一行（on_conflict=user_id），不再写死 id=1——
+ * 多租户库里 id=1 会被第一个建保险箱的人占用，其他人再写就撞主键或被 RLS 拒绝。
  * 与 reencryptVault 写 verifier 用的是同一张表同一行，区别是这里不需要旧口令，
  * 用于「换台全新设备、且从未设过保险箱口令」时把保险箱初始化出来。
  *
@@ -189,10 +217,17 @@ export async function setupVault(
   try {
     const key = await deriveKey(passphrase)
     const verifier = await encryptString(key, VERIFIER_PLAIN)
-    const res = await authedFetch(`${API_BASE}/vault_meta?on_conflict=id`, {
+    const uid = currentUserId()
+    if (!uid) return { ok: false, error: '尚未登录，请先登录再设置保险箱口令' }
+    const res = await authedFetch(`${API_BASE}/vault_meta?on_conflict=user_id`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: 1, verifier_enc: verifier, iterations: CRYPTO_ITERATIONS, salt: CRYPTO_SALT }),
+      body: JSON.stringify({
+        user_id: uid,
+        verifier_enc: verifier,
+        iterations: CRYPTO_ITERATIONS,
+        salt: CRYPTO_SALT,
+      }),
     })
     if (res.status === 401 || res.status === 403) {
       return { ok: false, error: '登录已失效，请重新登录' }

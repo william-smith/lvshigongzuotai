@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
-import { authEnabled, changePassword, isNasRole, useAuth } from '../lib/auth'
+import { authEnabled, changePassword, useAuth } from '../lib/auth'
 import { isCloud } from '../lib/data'
 import {
   activeBackend,
@@ -436,15 +436,20 @@ export function Settings() {
           )}
         </Section>
 
-        {/* 数据源：仅 role=nas 的账号可见（普通律师一律走云端公开库） */}
-        {isNasRole() && (
+        {/*
+          数据源：入口对所有登录用户开放，否则会形成死循环——
+          入口只在 role=nas 时显示，而 role=nas 又要先填了自建库才成立。
+          判定见 isNasRole()：服务端打了 nas 角色，或本人填了自己的自建库（填了即算）。
+        */}
+        {isCloud && (
           <Section
             icon="cloud"
             title="数据源"
-            desc="切换数据存放位置。自建库由你自行搭建，地址与密钥只保存在本机浏览器。"
+            desc="默认使用云端公开库。如需改用自己搭建的自建库，在下方填写其地址与密钥即可——二者只保存在本机浏览器。"
           >
             <BackendCard />
-            <DataSync />
+            {/* 同步需要两端都有库，未填自建库时不必展示 */}
+            {customConfigured() && <DataSync />}
           </Section>
         )}
 

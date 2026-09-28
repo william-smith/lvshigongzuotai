@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { resolveApi } from './apiConfig'
+import { customConfigured, resolveApi } from './apiConfig'
 
 /**
  * 登录：走 Supabase Auth 的标准 REST（GoTrue），同样不绑定 SDK。
@@ -60,9 +60,22 @@ export function currentRole(): string | null {
   return s ? roleFromJwt(s.access_token) : null
 }
 
-/** 是否具备「切换到自己自建库」的角色（role === 'nas'） */
+/**
+ * 是否具备「自建库相关能力」——满足任一即视为 nas 用户：
+ *   1) 服务端在 JWT 里打了 role=nas；
+ *   2) **本人已填写了自己的自建库地址与 key**。
+ *
+ * 第 2 条是刻意加的：否则会形成死循环——入口只在 role=nas 时显示，
+ * 而 role=nas 又要先在服务端打标，用户根本没机会去填地址。
+ * 「填了自己的库」本身就是最可靠的自建用户判定，且不依赖服务端改数据。
+ */
 export function isNasRole(): boolean {
-  return currentRole() === 'nas'
+  if (currentRole() === 'nas') return true
+  try {
+    return customConfigured()
+  } catch {
+    return false
+  }
 }
 
 /**
