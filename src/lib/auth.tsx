@@ -215,6 +215,117 @@ export async function changePassword(newPassword: string): Promise<{ ok: boolean
   }
 }
 
+/* ---------------- 律师个人资料（存 GoTrue user_metadata，按账号天然隔离） ---------------- */
+
+export interface LawyerProfile {
+  lawyer_name: string
+  firm_name: string
+}
+
+function mdToProfile(md: Record<string, unknown> | null | undefined): LawyerProfile {
+  return {
+    lawyer_name: typeof md?.lawyer_name === 'string' ? md.lawyer_name : '',
+    firm_name: typeof md?.firm_name === 'string' ? md.firm_name : '',
+  }
+}
+
+/** 读取当前登录律师的资料（GET /auth/v1/user → user_metadata）。未登录/网络异常返回 null */
+export async function fetchProfile(): Promise<LawyerProfile | null> {
+  const token = await getAccessToken()
+  if (!token || !AUTH_BASE || !ANON_KEY) return null
+  try {
+    const res = await fetch(`${AUTH_BASE}/user`, {
+      headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return null
+    const u = (await res.json().catch(() => null)) as { user_metadata?: Record<string, unknown> } | null
+    return mdToProfile(u?.user_metadata)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 保存律师姓名 / 律所名（PUT /auth/v1/user 的 data 字段 → user_metadata）。
+ * 每个律师填自己的，互不可见互不影响；与 changePassword 走同一个端点。
+ */
+export async function saveProfileRemote(p: LawyerProfile): Promise<{ ok: boolean; error?: string }> {
+  const token = await getAccessToken()
+  if (!token || !AUTH_BASE || !ANON_KEY) return { ok: false, error: '未登录或尚未接入云端' }
+  try {
+    const res = await fetch(`${AUTH_BASE}/user`, {
+      method: 'PUT',
+      headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { lawyer_name: p.lawyer_name.trim(), firm_name: p.firm_name.trim() } }),
+    })
+    if (!res.ok) {
+      const b = (await res.json().catch(() => ({}))) as TokenResp & { message?: string }
+      const raw = b.error_description || b.msg || b.message || b.error || ''
+      return { ok: false, error: raw || `保存失败（HTTP ${res.status}）` }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, error: '网络异常，请稍后重试' }
+  }
+}
+
+/**
+ * 发送密码找回邮件（GoTrue /recover）。
+ * 收件人任意邮箱皆可（已配自定义 SMTP，不复受内置 SMTP 2 封/小时限制）。
+ * 防邮箱枚举：GoTrue 即使邮箱不存在也返回 200，调用方一律按「已发送」处理，
+ * 避免攻击者借此探查哪些邮箱已注册。
+ */
+export async function requestPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
+  if (!AUTH_BASE || !ANON_KEY) return { ok: false, error: '未配置 VITE_API_BASE' }
+  try {
+    const res = await timedFetch(`${AUTH_BASE}/recover`, {
+      method: 'POST',
+      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim() }),
+    })
+    if (!res.ok) {
+      const b = (await res.json().catch(() => ({}))) as TokenResp
+      return { ok: false, error: b.error_description || b.msg || `发送失败（HTTP ${res.status}）` }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, error: '网络异常，请稍后重试' }
+  }
+}
+
+/**
+ * 消费邮箱确认 / 密码找回邮件点开后的回调会话。
+ * GoTrue 校验 token 成功会 302 回 redirect_to（本系统设为 SPA 根 `/`），
+ * 并把会话塞进 URL fragment（hash），形如：
+ *   #access_token=...&token_type=bearer&expires_in=3600&refresh_token=...&type=recovery
+ * 这里把会话取出写入本地（与登录同套存储），同时清掉 URL 上的 hash，
+ * 避免刷新时重复消费一个已被用掉的 token。
+ * @returns type（recovery / signup / email_signup / invitation / …），无会话则返回 null
+ */
+export function consumeUrlSession(): string | null {
+  if (typeof window === 'undefined') return null
+  const hash = window.location.hash.replace(/^#/, '')
+  const search = window.location.search.replace(/^\?/, '')
+  const params = new URLSearchParams(hash || search)
+  const access = params.get('access_token')
+  if (!access) return null
+  const refresh = params.get('refresh_token') ?? ''
+  const expiresIn = Number(params.get('expires_in') || '3600') || 3600
+  const s: Session = {
+    access_token: access,
+    refresh_token: refresh,
+    expires_at: Date.now() + expiresIn * 1000,
+    email: params.get('email') || '',
+  }
+  writeSession(s, true)
+  try {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  } catch {
+    /* ignore */
+  }
+  return params.get('type') || ''
+}
+
 /** 登录状态失效时（401）由数据层调用，强制回到登录页 */
 let onExpired: (() => void) | null = null
 export function setOnExpired(cb: () => void) {
@@ -340,6 +451,13 @@ interface AuthState {
   email: string
   login: (email: string, password: string, remember: boolean) => Promise<void>
   logout: () => Promise<void>
+  /** 邮件回调带进来的会话类型（recovery / signup / email_signup …），无则 null */
+  urlType: string | null
+  /** ResetPassword 处理完后清空，让 Gate 落回登录门 */
+  clearUrlType: () => void
+  /** 当前登录律师的姓名/律所（来自 user_metadata，每个律师自己填写） */
+  profile: LawyerProfile | null
+  saveProfile: (p: LawyerProfile) => Promise<{ ok: boolean; error?: string }>
 }
 
 const Ctx = createContext<AuthState | null>(null)
@@ -347,9 +465,25 @@ const Ctx = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [ready, setReady] = useState(false)
+  const [urlType, setUrlType] = useState<string | null>(null)
 
   useEffect(() => {
     setOnExpired(() => setSession(null))
+    // 先处理邮件回调（确认 / 找回）带进来的会话：GoTrue 把会话塞进 URL hash，
+    // consumeUrlSession 取出写入本地并返回 type；后续由 Gate 据 type 决定
+    // 显示「重置密码」页（recovery）还是自动登录进主界面（signup 确认）。
+    let recovered: string | null = null
+    try {
+      recovered = consumeUrlSession()
+    } catch {
+      recovered = null
+    }
+    if (recovered) {
+      setUrlType(recovered)
+      setSession(readSession())
+      setReady(true)
+      return
+    }
     const s = readSession()
     // 隔夜/隔小时再打开时，本地存着的 token 多半已过期。
     // **必须先静默续期、拿到结果再放行**：否则会先把主界面当「已登录」渲染出来，
@@ -378,9 +512,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null)
   }, [])
 
+  const clearUrlType = useCallback(() => setUrlType(null), [])
+
+  // 律师资料：随会话 token 变化自动加载（登录/续期/邮件回调后都会刷新）
+  const [profile, setProfile] = useState<LawyerProfile | null>(null)
+  const token = session?.access_token ?? null
+  useEffect(() => {
+    if (!token) {
+      setProfile(null)
+      return
+    }
+    let alive = true
+    fetchProfile().then((p) => {
+      if (alive) setProfile(p)
+    })
+    return () => {
+      alive = false
+    }
+  }, [token])
+
+  const saveProfile = useCallback(async (p: LawyerProfile) => {
+    const r = await saveProfileRemote(p)
+    if (r.ok) setProfile({ lawyer_name: p.lawyer_name.trim(), firm_name: p.firm_name.trim() })
+    return r
+  }, [])
+
   const value = useMemo<AuthState>(
-    () => ({ ready, session, email: session?.email ?? '', login, logout }),
-    [ready, session, login, logout],
+    () => ({ ready, session, email: session?.email ?? '', login, logout, urlType, clearUrlType, profile, saveProfile }),
+    [ready, session, login, logout, urlType, clearUrlType, profile, saveProfile],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

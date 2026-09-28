@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { authEnabled, changePassword, useAuth } from '../lib/auth'
 import { isCloud } from '../lib/data'
@@ -35,6 +35,81 @@ function Section({
       )}
       <div className="space-y-4">{children}</div>
     </section>
+  )
+}
+
+/** 律师信息卡：姓名/律所由每个律师自己填写，存 user_metadata（按账号隔离） */
+function ProfileCard() {
+  const { profile, saveProfile, email } = useAuth()
+  const [name, setName] = useState('')
+  const [firm, setFirm] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [ok, setOk] = useState(false)
+
+  // profile 是异步加载的：首次到位时回填表单（不覆盖用户已输入的内容）
+  useEffect(() => {
+    if (profile && !loaded) {
+      setName(profile.lawyer_name)
+      setFirm(profile.firm_name)
+      setLoaded(true)
+    }
+  }, [profile, loaded])
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim()) {
+      setErr('请填写律师姓名')
+      return
+    }
+    setBusy(true)
+    setErr('')
+    setOk(false)
+    const r = await saveProfile({ lawyer_name: name, firm_name: firm })
+    setBusy(false)
+    if (r.ok) setOk(true)
+    else setErr(r.error ?? '保存失败，请稍后重试')
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded-xl border border-line bg-white p-5">
+      <div className="text-sm font-semibold text-ink mb-1">律师信息</div>
+      <p className="text-xs text-ink-3 mb-4">
+        姓名与律所显示在左侧栏底部，仅保存在你自己的账号下（{email || '未登录'}），其他律师互不可见。
+      </p>
+
+      <label className="block text-xs font-medium text-ink-2 mb-1.5">律师姓名</label>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="如：张三"
+        className="w-full h-10 px-3 rounded-lg border border-line bg-white text-sm text-ink placeholder:text-ink-3 outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 transition"
+      />
+
+      <label className="block text-xs font-medium text-ink-2 mt-4 mb-1.5">律所名称</label>
+      <input
+        value={firm}
+        onChange={(e) => setFirm(e.target.value)}
+        placeholder="如：江苏某某律师事务所"
+        className="w-full h-10 px-3 rounded-lg border border-line bg-white text-sm text-ink placeholder:text-ink-3 outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 transition"
+      />
+
+      {err && <div className="mt-3 px-3 py-2 rounded-lg bg-danger/6 border border-danger/20 text-xs text-danger">{err}</div>}
+      {ok && (
+        <div className="mt-3 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700">
+          已保存。
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={busy || !name.trim()}
+        className="mt-4 w-full h-10 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-60 text-white text-sm font-medium transition-colors"
+      >
+        {busy ? '正在保存…' : '保存律师信息'}
+      </button>
+    </form>
   )
 }
 
@@ -166,6 +241,7 @@ export function Settings() {
             </span>
           }
         >
+          {authEnabled && <ProfileCard />}
           {authEnabled ? (
             <form onSubmit={submit} className="rounded-xl border border-line bg-white p-5">
               <div className="text-sm font-semibold text-ink mb-1">修改登录密码</div>

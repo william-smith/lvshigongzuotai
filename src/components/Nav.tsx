@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { authEnabled, useAuth } from '../lib/auth'
 import { isCloud } from '../lib/data'
 import { useVault } from '../store/vault'
@@ -51,6 +51,85 @@ function SyncCard() {
   )
 }
 
+/** 律师信息填写弹窗：姓名/律所存 user_metadata，每个律师自己维护 */
+function ProfileDialog({ onClose }: { onClose: () => void }) {
+  const { profile, saveProfile, email } = useAuth()
+  const [name, setName] = useState(profile?.lawyer_name ?? '')
+  const [firm, setFirm] = useState(profile?.firm_name ?? '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const submit = async () => {
+    if (!name.trim()) {
+      setErr('请填写律师姓名')
+      return
+    }
+    setBusy(true)
+    setErr('')
+    const r = await saveProfile({ lawyer_name: name, firm_name: firm })
+    setBusy(false)
+    if (r.ok) onClose()
+    else setErr(r.error ?? '保存失败，请稍后重试')
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-pop p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 mb-1">
+          <span className="w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center">
+            <Icon name="user" className="w-4.5 h-4.5" />
+          </span>
+          <h2 className="text-base font-semibold text-ink">律师信息</h2>
+        </div>
+        <p className="text-xs text-ink-2 leading-relaxed mb-4">
+          姓名与律所会显示在左侧栏底部，仅保存在你自己的账号下，其他律师看不到、也互不影响。
+        </p>
+
+        <label className="block text-xs font-medium text-ink-2 mb-1.5">律师姓名</label>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          placeholder="如：张三"
+          className="w-full h-11 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
+        />
+
+        <label className="block text-xs font-medium text-ink-2 mt-4 mb-1.5">律所名称</label>
+        <input
+          value={firm}
+          onChange={(e) => setFirm(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          placeholder="如：江苏某某律师事务所"
+          className="w-full h-11 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
+        />
+
+        {err && <p className="mt-2 text-xs text-danger">{err}</p>}
+        {!email && <p className="mt-2 text-2xs text-ink-3">当前未登录，填写内容无法保存</p>}
+
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose} className="flex-1 h-10 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas">
+            取消
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || !name.trim()}
+            className="flex-1 h-10 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-hover disabled:opacity-50"
+          >
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Sidebar({
   view,
   onView,
@@ -64,10 +143,14 @@ export function Sidebar({
   onCreate: () => void
   createLabel: string
 }) {
-  const { logout } = useAuth()
+  const { logout, profile, email } = useAuth()
+  const [profOpen, setProfOpen] = useState(false)
   const confirmLogout = () => {
     if (confirm('退出登录后需要重新输入邮箱密码，确定吗？')) void logout()
   }
+  const name = profile?.lawyer_name?.trim() ?? ''
+  const firm = profile?.firm_name?.trim() ?? ''
+  const avatar = name ? name.slice(0, 1) : email ? email.slice(0, 1).toUpperCase() : '?'
   return (
     <aside className="hidden md:flex w-60 shrink-0 bg-sidebar flex-col">
       <Brand />
@@ -117,11 +200,21 @@ export function Sidebar({
       </nav>
       <SyncCard />
       <div className="px-4 h-14 flex items-center gap-2.5 border-t border-white/10 shrink-0">
-        <span className="w-8 h-8 rounded-full bg-white/10 text-white/80 text-xs flex items-center justify-center">景</span>
-        <div className="min-w-0">
-          <div className="text-xs text-white/85 truncate">景黎明</div>
-          <div className="text-[10px] text-white/35 truncate">江苏维尔达律师事务所</div>
-        </div>
+        <span className="w-8 h-8 rounded-full bg-white/10 text-white/80 text-xs flex items-center justify-center shrink-0">
+          {avatar}
+        </span>
+        <button
+          onClick={() => setProfOpen(true)}
+          title="点击填写律师姓名与律所"
+          className="min-w-0 flex-1 text-left"
+        >
+          <div className={`text-xs truncate ${name ? 'text-white/85' : 'text-white/45'}`}>
+            {name || '点击完善姓名'}
+          </div>
+          <div className={`text-[10px] truncate ${firm ? 'text-white/35' : 'text-white/25'}`}>
+            {firm || '律师姓名 / 律所名称'}
+          </div>
+        </button>
         {authEnabled && (
           <button
             onClick={confirmLogout}
@@ -132,6 +225,7 @@ export function Sidebar({
           </button>
         )}
       </div>
+      {profOpen && <ProfileDialog onClose={() => setProfOpen(false)} />}
     </aside>
   )
 }
