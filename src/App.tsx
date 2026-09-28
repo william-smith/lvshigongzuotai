@@ -7,6 +7,7 @@ import { AuthProvider, authEnabled, useAuth } from './lib/auth'
 import { isCloud, loadDataset } from './lib/data'
 import { clearCachedDataset, getCachedDataset, setCachedDataset } from './lib/datasetCache'
 import { Login } from './pages/Login'
+import { ResetPassword } from './pages/ResetPassword'
 import { daysUntil, normalizeStage, type CaseRow, type Dataset, type ExpenseRow, type IntakeRow, type TimelineRow } from './lib/types'
 import { useVault } from './store/vault'
 import { CaseDetail } from './pages/CaseDetail'
@@ -482,7 +483,7 @@ function Shell() {
 
 /** 登录门：接了云端就必须先登录，本地演示数据直接放行 */
 function Gate() {
-  const { ready, session } = useAuth()
+  const { ready, session, urlType, clearUrlType } = useAuth()
   if (!ready) {
     // 隔夜再打开时这里会停留 1~3 秒：正在用 refresh_token 静默续期，
     // 续期成功就直接进主界面（不必重新登录）；失败才回登录页。
@@ -492,6 +493,9 @@ function Gate() {
       </div>
     )
   }
+  // 邮件点开带回的会话：type=recovery → 显示「重置密码」页；
+  // type=signup/email_signup → 上面已写入会话，直接进主界面（自动登录）。
+  if (urlType === 'recovery') return <ResetPassword onDone={clearUrlType} />
   if (authEnabled && !session) return <Login />
   return <Shell />
 }

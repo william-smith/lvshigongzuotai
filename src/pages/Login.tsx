@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Icon } from '../components/Icon'
-import { useAuth, signUp, type SignUpResult } from '../lib/auth'
+import { useAuth, signUp, requestPasswordReset, type SignUpResult } from '../lib/auth'
 
-type Mode = 'login' | 'register'
+type Mode = 'login' | 'register' | 'forgot'
 
 export function Login() {
   const { login } = useAuth()
@@ -21,6 +21,7 @@ export function Login() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [done, setDone] = useState<SignUpResult | null>(null)
+  const [forgotSent, setForgotSent] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -66,10 +67,34 @@ export function Login() {
     }
   }
 
+  const forgot = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErr('')
+    const mail = email.trim()
+    if (!mail) {
+      setErr('请填写邮箱')
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await requestPasswordReset(mail)
+      if (!r.ok) {
+        setErr(r.error || '发送失败，请稍后重试')
+        return
+      }
+      setForgotSent(true)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : '发送失败，请稍后重试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const switchMode = (m: Mode) => {
     setMode(m)
     setErr('')
     setDone(null)
+    setForgotSent(false)
     setPw('')
     setRpw('')
     setRpw2('')
@@ -85,7 +110,11 @@ export function Login() {
           </span>
           <h1 className="mt-4 text-[19px] font-semibold text-ink tracking-tight">律师工作台</h1>
           <p className="mt-1 text-xs text-ink-3">
-            {mode === 'login' ? '登录以管理你的案件与材料' : '注册一个属于你自己的工作台'}
+            {mode === 'login'
+              ? '登录以管理你的案件与材料'
+              : mode === 'register'
+                ? '注册一个属于你自己的工作台'
+                : '输入注册邮箱，我们会发送重置链接'}
           </p>
         </div>
 
@@ -172,7 +201,7 @@ export function Login() {
               还没有账号？免费注册一个
             </button>
           </form>
-        ) : (
+        ) : mode === 'register' ? (
           <form onSubmit={register} className="bg-white rounded-xl border border-line shadow-card p-6">
             <label className="block text-xs font-medium text-ink-2 mb-1.5">邮箱</label>
             <input
@@ -237,6 +266,50 @@ export function Login() {
               已有账号？去登录
             </button>
           </form>
+        ) : (
+          <form onSubmit={forgot} className="bg-white rounded-xl border border-line shadow-card p-6">
+            <label className="block text-xs font-medium text-ink-2 mb-1.5">邮箱</label>
+            <input
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full h-10 px-3 rounded-lg border border-line bg-white text-sm text-ink placeholder:text-ink-3 outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 transition"
+            />
+
+            {err && (
+              <div className="mt-3 px-3 py-2 rounded-lg bg-danger/6 border border-danger/20 text-xs text-danger">
+                {err}
+              </div>
+            )}
+
+            {forgotSent ? (
+              <div className="mt-4 flex items-start gap-2 px-3 py-3 rounded-lg bg-brand/6 border border-brand/20">
+                <Icon name="check" className="w-4 h-4 text-brand mt-0.5 shrink-0" />
+                <p className="text-xs text-ink-2 leading-relaxed">
+                  如果该邮箱已注册，我们已发送一封含重置链接的邮件。请点击邮件中的链接设置新密码。
+                </p>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={busy}
+                className="mt-5 w-full h-10 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-60 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+              >
+                {busy && <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />}
+                {busy ? '正在发送…' : '发送重置邮件'}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              className="mt-3 w-full text-center text-xs text-ink-3 hover:text-brand transition-colors"
+            >
+              返回登录
+            </button>
+          </form>
         )}
 
         {/* 安全说明 */}
@@ -248,7 +321,14 @@ export function Login() {
         </div>
         {mode === 'login' && (
           <p className="mt-3 text-center text-[11px] text-ink-3">
-            忘记密码？登录后在「设置 → 修改密码」里重设，或在 Supabase 控制台重置。
+            忘记密码？
+            <button
+              type="button"
+              onClick={() => switchMode('forgot')}
+              className="text-brand hover:underline ml-1"
+            >
+              通过邮件重置
+            </button>
           </p>
         )}
       </div>
