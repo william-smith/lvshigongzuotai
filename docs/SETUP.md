@@ -203,16 +203,21 @@ npm run build          # 输出 dist/
 
 下面是几个常用的托管（任选其一）：
 
-### 6.1 Vercel / Netlify / Cloudflare Pages
+### 6.1 Cloudflare Pages（本项目当前使用）
 
-- 导入这个 GitHub 仓库
-- Build command 留空（仓库**预设** `npm run build`），Output dir 填 `dist`
+国内直连 `*.supabase.co` 会被 SNI 拦截，所以公开版走 **Cloudflare Pages + Pages Functions 同源反代**：
+浏览器只连自己的域名，`/api/*` 由 CF 边缘节点转发到 Supabase。部署**不走 Git 集成**，用 wrangler 直接上传。
+
+完整步骤见 **[CLOUDFLARE_PAGES.md](./CLOUDFLARE_PAGES.md)**。两个必须遵守的点先记住：
+
+1. `VITE_API_BASE` **必须带 `/rest/v1`**（漏了数据层 404，但登录照常，极易误判）。
+2. 部署**必须 `cd` 进部署目录再 `pages deploy .`**，否则 `functions/` 不会被上传、`/api/*` 落到 SPA。
+
+### 6.2 其它静态托管（Netlify / 腾讯云 COS / 阿里云 OSS / 七牛云）
+
+- 开静态网站托管 / 导入仓库，构建命令 `npm run build`，输出目录 `dist`
 - 环境变量 `VITE_*` 在托管商面板里填（避免写到 `.env.production` 提交）
-
-### 6.2 腾讯云 COS / 阿里云 OSS / 七牛云
-
-- 开静态网站托管，目录指向 `dist/`
-- 建议挂 CDN（备案后）
+- ⚠️ 这类托管**没有** Functions 反代能力，国内会因 SNI 拦打不开 Supabase 数据层；仅适合自建后端或非境内使用。
 
 ### 6.3 自建 Nginx
 

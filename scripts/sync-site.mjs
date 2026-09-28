@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 把 dist/ 同步到发布目录（../lawyer-workbench-site）。
+ * 把 dist/ 同步到发布目录（../lawyer-workbench-site-v3）。
  *
  * 用法：
  *   npm run build && npm run sync:site
@@ -15,10 +15,9 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
 const dist = join(root, 'dist')
-// 两个发布目录都要同步：lawyer-workbench-site（备用副本）
-// 与 lawyer-workbench-site-v3（线上部署实际使用的目录）
+// 只同步线上部署实际使用的目录。
+// （旧的 lawyer-workbench-site 备用副本已废弃并于 2026-09-28 归档，不再生成。）
 const siteDirs = [
-  resolve(root, '..', 'lawyer-workbench-site'),
   resolve(root, '..', 'lawyer-workbench-site-v3'),
 ]
 

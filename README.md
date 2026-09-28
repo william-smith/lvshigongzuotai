@@ -63,7 +63,7 @@ npm run dev      # 本地浏览器打开默认 http://localhost:5173
 
 ## 部署
 
-`npm run build` 产物在 `dist/`，**纯静态**——丢到任意静态托管都行（Vercel / Netlify / Cloudflare Pages / COS / 自建 Nginx 都可），单页路由 fallback 别忘。详细见 [SETUP.md §6](./docs/SETUP.md#6-部署静态站点)。
+`npm run build` 产物在 `dist/`，**纯静态**——丢到任意静态托管都行（Cloudflare Pages / Netlify / COS / 自建 Nginx 都可），单页路由 fallback 别忘。详细见 [SETUP.md §6](./docs/SETUP.md#6-部署静态站点)。
 
 ---
 
@@ -106,7 +106,7 @@ lawyer-workbench/
 │   ├── schema.sql               # 业务表
 │   ├── docs_schema.sql          # 文件/文件夹映射
 │   └── rls_uid_isolation.sql    # 行级安全（单所多人，旧模板）
-│   └── multitenant_schema.sql   # 公开多租户 schema（Vercel+Supabase 新项目用）
+│   └── multitenant_schema.sql   # 公开多租户 schema（新 Supabase 项目用）
 ├── scripts/            # 运营脚本（auth/迁移/check-api …）
 ├── public/             # 静态资源（icons、manifest.webmanifest、sw.js）
 ├── docs/
@@ -146,7 +146,7 @@ lawyer-workbench/
 
 ---
 
-## 公开多租户部署（Vercel + Supabase，开放给所有律师）
+## 公开多租户部署（Cloudflare Pages + Supabase，开放给所有律师）
 
 master 分支已改为**多租户**：每位律师自助注册、各自独立空间，数据按 `user_id` 行级隔离，跨账号零串扰。部署到一个**全新的空白 Supabase 项目**——不要复用含真实案件的老项目。
 
@@ -163,12 +163,15 @@ update public.profiles set role = 'admin' where email = '管理邮箱@example.co
 ```
 `role='admin'` 的用户经 `is_admin()` 可越过隔离做运维（当前为数据层能力，管理后台为后续功能）。
 
-### 3. Vercel 部署
-- Vercel 导入本仓库（GitHub: william-smith/lvshigongzuotai），框架选 Vite，构建 `npm run build`，输出 `dist`（仓库已含 `vercel.json`）。
-- 环境变量（Production / Preview 都配）：
-  - `VITE_API_BASE` = `https://<project-ref>.supabase.co/rest/v1`
+### 3. Cloudflare Pages 部署
+- Cloudflare Pages 新建项目 `lawyer-workbench-public`，用 wrangler **直接上传**构建产物（不走 Git 集成）。
+- 构建前在 `.env` 配好（构建期注入，**不入库**）：
+  - `VITE_API_BASE` = `https://<你的域名>/api/rest/v1` —— **必须带 `/rest/v1`**
   - `VITE_API_KEY` = 上面的 **anon key**（必须 anon，非 service_role）
-- Deploy。首屏即注册 / 登录页，任意律师可自助注册。
+- `npm run build` 后把 `dist/` + `functions/` + `_redirects` 同步进一个干净部署目录，在该目录内执行 `wrangler pages deploy .`。
+- 完整步骤、必踩的坑（必须 `cd` 进目录才会带上 Functions bundle）、以及**反代 `redirect:'manual'` 铁律**
+  见 [CLOUDFLARE_PAGES.md](./docs/CLOUDFLARE_PAGES.md)。
+- 首屏即注册 / 登录页，任意律师可自助注册。
 
 ### 4. 隔离要点
 - 归属表按 `user_id = auth.uid()` 隔离；子表（时间线 / 费用 / 材料 / 文件夹 / 联系人）沿 `case_id` 继承归属。
