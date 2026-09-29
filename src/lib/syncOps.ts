@@ -102,6 +102,31 @@ export interface ConflictDetail {
   diffs: FieldDiff[]
 }
 
+/** 单行写入的字段级变化（同步明细展示用） */
+export interface SyncFieldChange {
+  field: string
+  label: string
+  from: string
+  to: string
+}
+
+/** 一次同步中每行实际写入的明细：哪个案件、哪条数据、改了什么 */
+export interface SyncItemDetail {
+  table: SyncTable
+  /** 主键 id */
+  id: string
+  /** 案件/当事人名（cases/intakes 取自身；子表按 case_id 回查） */
+  caseName: string
+  /** 行摘要（子表的名称/内容片段） */
+  label: string
+  /** 写入方向 */
+  dir: 'toNas' | 'toCloud'
+  /** 对端原本没有此行 → 新增；对端有 → 覆盖更新 */
+  kind: 'add' | 'update'
+  /** 内容字段变化（排除 user_id/id/时间戳；密文列只提示"密文更新"） */
+  changes: SyncFieldChange[]
+}
+
 /** 跨表共享：case_id → 案件当事人，供 timeline/expenses/materials 回查案件名 */
 export type CaseNameMap = Map<string, string>
 
@@ -126,6 +151,8 @@ export interface SyncReport {
   conflicts: ConflictDetail[]
   /** 实际写入行数 */
   written: number
+  /** 每行写入的明细（案件名 + 字段变化），界面默认折叠展示 */
+  details: SyncItemDetail[]
 }
 
 type Row = Record<string, unknown>
@@ -334,6 +361,34 @@ function diffFields(a: Row, b: Row): FieldDiff[] {
     }))
 }
 
+/** 明细里不参与"内容变化"展示的键：user_id 是本地字段，id 是对齐主键，时间戳不是内容 */
+const LOG_SKIP_KEYS = new Set(['user_id', 'id', 'created_at', 'updated_at'])
+
+/** 计算一行写入的内容级变化（fromRow=对端旧值，toRow=写入的新值）。
+ *  对端原本没有这一行时 fromRow 传 undefined → 返回空数组（界面标"新增"）。
+ *  密文列不展示长串，只标注（旧密文）→（新密文）。 */
+function changeList(fromRow: Row | undefined, toRow: Row): SyncFieldChange[] {
+  if (!fromRow) return []
+  const keys = new Set([...Object.keys(fromRow), ...Object.keys(toRow)])
+  const out: SyncFieldChange[] = []
+  for (const k of [...keys].sort()) {
+    if (LOG_SKIP_KEYS.has(k)) continue
+    if (JSON.stringify(fromRow[k]) === JSON.stringify(toRow[k])) continue
+    const enc = k.endsWith(ENC_SUFFIX)
+    const fmt = (v: unknown): string => {
+      const s = fmtVal(v, false)
+      return s.length > 40 ? `${s.slice(0, 40)}…` : s
+    }
+    out.push({
+      field: k,
+      label: fieldLabel(k),
+      from: enc ? '（旧密文）' : fmt(fromRow[k]),
+      to: enc ? '（新密文）' : fmt(toRow[k]),
+    })
+  }
+  return out
+}
+
 /** 把案件 row 记进共享表，供后续表按 case_id 回查当事人 */
 function rememberCases(rows: Row[], caseNames: CaseNameMap): void {
   for (const r of rows) {
@@ -400,7 +455,7 @@ async function syncTable(
   nas: SyncEndpoint,
   table: SyncTable,
   shared: SyncShared,
-): Promise<{ stat: TableSyncStat; written: number; conflictRows: ConflictDetail[] }> {
+): Promise<{ stat: TableSyncStat; written: number; conflictRows: ConflictDetail[]; details: SyncItemDetail[] }> {
   const stat: TableSyncStat = {
     table,
     onlyCloud: 0,
@@ -411,7 +466,26 @@ async function syncTable(
     unchanged: 0,
   }
   const conflictRows: ConflictDetail[] = []
+  const details: SyncItemDetail[] = []
   const caseNames = shared.caseNames
+
+  /** 记一条写入明细：src=被写入的（较新）行，fromRow=对端现有旧行（无则 undefined=新增） */
+  const mkDetail = (
+    dir: 'toNas' | 'toCloud',
+    kind: 'add' | 'update',
+    src: Row,
+    fromRow: Row | undefined,
+  ): void => {
+    details.push({
+      table,
+      id: String(src[PK]),
+      caseName: caseLabelOf(src, table, caseNames) || (table === 'vault_meta' ? '保险箱' : ''),
+      label: table === 'vault_meta' ? '口令校验信息（单向 云→NAS）' : rowSummary(src, table),
+      dir,
+      kind,
+      changes: changeList(fromRow, src),
+    })
+  }
 
   const [cRowsAll, nRows] = await Promise.all([fetchAll(cloud, table), fetchAll(nas, table)])
   // 云端若为多租户库：根表已按 user_id 过滤，子表再按父表归属过滤
@@ -435,9 +509,11 @@ async function syncTable(
     if (c && !n) {
       toNas.push(c)
       stat.onlyCloud++
+      mkDetail('toNas', 'add', c, undefined)
     } else if (n && !c) {
       toCloud.push(n)
       stat.onlyNas++
+      mkDetail('toCloud', 'add', n, undefined)
     } else if (c && n) {
       if (fingerprint(c) === fingerprint(n)) {
         stat.unchanged++
@@ -447,9 +523,11 @@ async function syncTable(
       if (w === 'a') {
         toNas.push(c)
         stat.cloudNewer++
+        mkDetail('toNas', 'update', c, n)
       } else if (w === 'b') {
         toCloud.push(n)
         stat.nasNewer++
+        mkDetail('toCloud', 'update', n, c)
       } else {
         stat.conflicts++
         const col = UPDATED_COL[table]
@@ -484,7 +562,22 @@ async function syncTable(
     await bumpSeq(cloud, table)
   }
 
-  return { stat, written: toNas.length + toCloud.length, conflictRows }
+  // 明细后处理：vault_meta 单向同步——「补→云」被抑制、并未实际写入，不计入明细；
+  // 「补→NAS」实际强制落到 NAS 的 id=1 单行，按覆盖更新记录它与现有行的差异。
+  let outDetails = details
+  if (table === 'vault_meta') {
+    outDetails = []
+    const existing = nMap.get('1')
+    for (const d of details) {
+      if (d.dir === 'toCloud') continue
+      d.kind = existing ? 'update' : 'add'
+      const src = cMap.get(d.id)
+      d.changes = changeList(existing, src ? { ...src, id: 1 } : { id: 1 })
+      outDetails.push(d)
+    }
+  }
+
+  return { stat, written: toNas.length + toCloud.length, conflictRows, details: outDetails }
 }
 
 /**
@@ -499,15 +592,17 @@ export async function runSync(
   const startedAt = Date.now()
   const stats: TableSyncStat[] = []
   const conflicts: ConflictDetail[] = []
+  const details: SyncItemDetail[] = []
   const shared: SyncShared = { caseNames: new Map<string, string>() }
   let written = 0
   let hasError = false
 
   for (const table of SYNC_TABLES) {
     try {
-      const { stat, written: w, conflictRows } = await syncTable(cloud, nas, table, shared)
+      const { stat, written: w, conflictRows, details: dRows } = await syncTable(cloud, nas, table, shared)
       stats.push(stat)
       conflicts.push(...conflictRows)
+      details.push(...dRows)
       written += w
       onTable?.(stat)
     } catch (e) {
@@ -535,6 +630,7 @@ export async function runSync(
     conflictTotal: stats.reduce((s, x) => s + x.conflicts, 0),
     conflicts,
     written,
+    details,
   }
 }
 

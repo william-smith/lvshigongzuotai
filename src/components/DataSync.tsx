@@ -224,6 +224,44 @@ export function DataSync() {
             </div>
           )}
 
+          {/* 同步明细：默认收起，点开看这次动了哪些案件、哪些字段从什么变成什么 */}
+          {report && report.details.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer select-none text-2xs text-ink-2 hover:text-ink">
+                本次同步明细（{report.details.length} 行 · 点开查看改动内容）
+              </summary>
+              <div className="mt-1.5 max-h-72 overflow-auto rounded-lg border border-line bg-canvas px-2.5 py-2 space-y-1.5">
+                {report.details.slice(0, 300).map((d, i) => (
+                  <div key={`${d.table}-${d.id}-${i}`} className="text-2xs leading-snug">
+                    <div className="text-ink">
+                      <span className="font-mono text-ink-3">[{d.table}]</span>{' '}
+                      {d.caseName && <strong className="font-semibold">{d.caseName}</strong>}
+                      {d.label && <span className="text-ink-2"> · {d.label}</span>}
+                      <span className="ml-1 text-ink-3">{d.dir === 'toNas' ? '→NAS' : '→云'}</span>
+                      {d.kind === 'add' && <span className="ml-1 text-brand">新增</span>}
+                      {d.kind === 'update' && d.changes.length === 0 && (
+                        <span className="ml-1 text-ink-3">内容无可见变化（覆盖写入）</span>
+                      )}
+                    </div>
+                    {d.changes.length > 0 && (
+                      <div className="pl-3 space-y-0.5">
+                        {d.changes.map((ch) => (
+                          <div key={ch.field} className="text-ink-2">
+                            · {ch.label}：<span className="text-ink-3 line-through">{ch.from}</span> →{' '}
+                            <span className="text-ink">{ch.to}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {report.details.length > 300 && (
+                  <div className="text-2xs text-ink-3">…其余 {report.details.length - 300} 行略</div>
+                )}
+              </div>
+            </details>
+          )}
+
           {report && report.conflicts.length > 0 && (
             <div className="mt-2 rounded-lg border border-[#FEDF89] bg-[#FFFAEB] px-3 py-2.5 space-y-2.5">
               <div className="text-2xs font-medium text-warn">
