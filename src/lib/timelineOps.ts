@@ -10,6 +10,7 @@
  * 删除时：timeline 表已声明 on delete cascade（随案件），但删除单条是显式 DELETE。
  */
 import { authedFetch } from './auth'
+import { recordTombstone } from './syncOps'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import type { TimelineRow } from './types'
@@ -145,4 +146,6 @@ export async function deleteTimeline(id: number): Promise<void> {
     const t = await res.text().catch(() => '')
     throw new Error(`删除时间线失败：${res.status} ${t.slice(0, 200)}`)
   }
+  // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
+  void recordTombstone('timeline', id)
 }

@@ -212,7 +212,14 @@ export function DataSync() {
 
           {report && (
             <div className="mt-2.5 text-2xs text-ink-3 leading-relaxed">
-              写入 <span className="text-ink-2 font-medium">{report.written}</span> 行 · 耗时{' '}
+              写入 <span className="text-ink-2 font-medium">{report.written}</span> 行
+              {report.deleted > 0 && (
+                <span>
+                  {' '}
+                  · 删除 <span className="text-danger font-medium">{report.deleted}</span> 行
+                </span>
+              )}
+              {' '}· 耗时{' '}
               <span className="text-ink-2 font-medium">{((report.finishedAt - report.startedAt) / 1000).toFixed(1)}s</span>
               {report.conflictTotal > 0 && (
                 <span className="text-warn">
@@ -239,6 +246,9 @@ export function DataSync() {
                       {d.label && <span className="text-ink-2"> · {d.label}</span>}
                       <span className="ml-1 text-ink-3">{d.dir === 'toNas' ? '→NAS' : '→云'}</span>
                       {d.kind === 'add' && <span className="ml-1 text-brand">新增</span>}
+                      {d.kind === 'delete' && (
+                        <span className="ml-1 text-danger">已删除（按对端墓碑同步删除）</span>
+                      )}
                       {d.kind === 'update' && d.changes.length === 0 && (
                         <span className="ml-1 text-ink-3">内容无可见变化（覆盖写入）</span>
                       )}

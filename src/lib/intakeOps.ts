@@ -11,6 +11,7 @@
  *        关联联系人会被数据库自动清掉，无需手动级联。
  */
 import { authedFetch } from './auth'
+import { recordTombstone } from './syncOps'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import type { IntakeRow } from './types'
@@ -162,4 +163,6 @@ export async function deleteIntake(id: number): Promise<void> {
     const t = await res.text().catch(() => '')
     throw new Error(`删除接案失败：${res.status} ${t.slice(0, 200)}`)
   }
+  // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
+  void recordTombstone('intakes', id)
 }

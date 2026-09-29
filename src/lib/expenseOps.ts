@@ -16,6 +16,7 @@
  * 删除时：expenses 表已声明 on delete cascade（随案件），但删除单条是显式 DELETE。
  */
 import { authedFetch } from './auth'
+import { recordTombstone } from './syncOps'
 import { isCloud } from './data'
 import { decryptString, encryptString, maskSensitive } from './crypto'
 import type { ExpenseRow } from './types'
@@ -250,4 +251,6 @@ export async function deleteExpense(id: number): Promise<void> {
     const t = await res.text().catch(() => '')
     throw new Error(`删除费用失败：${res.status} ${t.slice(0, 200)}`)
   }
+  // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
+  void recordTombstone('expenses', id)
 }

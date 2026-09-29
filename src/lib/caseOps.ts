@@ -8,6 +8,7 @@
  * 保留策略：若用户没有改动「详细情况」，原密文原样保留，不会被覆盖成 null。
  */
 import { authedFetch } from './auth'
+import { recordTombstone } from './syncOps'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import { normalizeStage, type CaseRow } from './types'
@@ -172,4 +173,6 @@ export async function deleteCase(id: number): Promise<void> {
     const t = await res.text().catch(() => '')
     throw new Error(`删除案件失败：${res.status} ${t.slice(0, 200)}`)
   }
+  // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
+  void recordTombstone('cases', id)
 }

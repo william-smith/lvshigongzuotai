@@ -14,6 +14,9 @@
  * 全程按表分批 200 行 upsert（on_conflict=id），任何一表报错不影响其他表。
  */
 
+import { authedFetch, currentUserId } from './auth'
+import { resolveApi } from './apiConfig'
+
 export interface SyncEndpoint {
   /** REST 基址，形如 https://xxx/rest/v1 */
   base: string
@@ -73,6 +76,8 @@ export interface TableSyncStat {
   nasNewer: number
   /** 判定不了，两边都保留不动 */
   conflicts: number
+  /** 按对端墓碑执行的删除（删除传播，防止已删数据被补回来） */
+  deleted: number
   /** 内容一致，无操作 */
   unchanged: number
   error?: string
@@ -121,8 +126,8 @@ export interface SyncItemDetail {
   label: string
   /** 写入方向 */
   dir: 'toNas' | 'toCloud'
-  /** 对端原本没有此行 → 新增；对端有 → 覆盖更新 */
-  kind: 'add' | 'update'
+  /** 对端原本没有此行 → 新增；对端有 → 覆盖更新；按对端墓碑删除 → delete */
+  kind: 'add' | 'update' | 'delete'
   /** 内容字段变化（排除 user_id/id/时间戳；密文列只提示"密文更新"） */
   changes: SyncFieldChange[]
 }
@@ -137,6 +142,16 @@ export interface SyncShared {
   ownedCaseIds?: Set<string>
   /** 云端侧本人拥有的接案线索 id */
   ownedIntakeIds?: Set<string>
+  /** 云端墓碑：key = `${tbl}:${row_id}` → 删除时间 */
+  tombCloud?: Map<string, string>
+  /** NAS 墓碑：同上 */
+  tombNas?: Map<string, string>
+  /** 已「复活」（行仍存在/又被改过）需清除的墓碑 key */
+  tombStale?: Set<string>
+  /** cases 同步后任一侧仍存在的案件 id —— 子表据此判断自己是不是孤儿 */
+  aliveCaseIds?: Set<string>
+  /** intakes 同步后任一侧仍存在的线索 id */
+  aliveIntakeIds?: Set<string>
 }
 
 export interface SyncReport {
@@ -151,7 +166,9 @@ export interface SyncReport {
   conflicts: ConflictDetail[]
   /** 实际写入行数 */
   written: number
-  /** 每行写入的明细（案件名 + 字段变化），界面默认折叠展示 */
+  /** 按对端墓碑执行的删除行数 */
+  deleted: number
+  /** 每行写入/删除的明细（案件名 + 字段变化），界面默认折叠展示 */
   details: SyncItemDetail[]
 }
 
@@ -223,6 +240,99 @@ async function bumpSeq(ep: SyncEndpoint, table: SyncTable): Promise<void> {
   } catch (e) {
     console.warn(`[sync] bumpSeq ${table} 异常`, e)
   }
+}
+
+/* ========================= 墓碑（删除传播） =========================
+ * 同步原本「只补不删」：一端删掉的行，在另一端看来只是"缺这行"，会被补回来（复活）。
+ * 墓碑表 sync_tombstones 记录「本库删掉了哪张表的哪一行」，同步据此在对端执行删除。
+ * ================================================================== */
+
+/** 墓碑表名（同步元数据表，不作为业务表参与逐行比对） */
+export const TOMB_TABLE = 'sync_tombstones'
+
+/** 墓碑键：`${表名}:${行id}` */
+function tombKey(tbl: string, rowId: unknown): string {
+  return `${tbl}:${String(rowId)}`
+}
+
+/**
+ * 读取一侧的全部墓碑。**表还没建时返回空 Map**——未执行建表 SQL 的环境
+ * 仍能正常同步（只是没有删除传播能力），不会因此报错。
+ */
+async function fetchTombs(ep: SyncEndpoint): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  try {
+    const scope = ep.scopeUid ? `&user_id=eq.${ep.scopeUid}` : ''
+    const res = await fetch(`${cleanBase(ep.base)}/${TOMB_TABLE}?select=tbl,row_id,deleted_at${scope}`, {
+      headers: headers(ep),
+    })
+    if (!res.ok) return out
+    const rows = (await res.json()) as Array<{ tbl: string; row_id: string; deleted_at: string }>
+    for (const r of rows) out.set(tombKey(r.tbl, r.row_id), String(r.deleted_at ?? ''))
+  } catch {
+    // 表不存在或读不到 → 按「无墓碑」处理
+  }
+  return out
+}
+
+/** 按 id 删除一批行（删除传播用） */
+async function deleteRows(ep: SyncEndpoint, table: SyncTable, ids: string[]): Promise<void> {
+  if (!ids.length) return
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK)
+    const res = await fetch(`${cleanBase(ep.base)}/${table}?id=in.(${batch.join(',')})`, {
+      method: 'DELETE',
+      headers: headers(ep),
+    })
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      throw new Error(`删除失败 ${res.status} ${t.slice(0, 300)}`)
+    }
+  }
+}
+
+/** 删除一条墓碑（行复活时清理，避免下次同步又把它删掉） */
+async function deleteTomb(ep: SyncEndpoint, tbl: string, rowId: string): Promise<void> {
+  const scope = ep.scopeUid ? `&user_id=eq.${ep.scopeUid}` : ''
+  const res = await fetch(
+    `${cleanBase(ep.base)}/${TOMB_TABLE}?tbl=eq.${tbl}&row_id=eq.${encodeURIComponent(rowId)}${scope}`,
+    { method: 'DELETE', headers: headers(ep) },
+  )
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    console.warn(`[sync] 清理墓碑失败 ${tbl}/${rowId}：${res.status} ${t.slice(0, 200)}`)
+  }
+}
+
+/** 写入墓碑（把一端的删除记录补到另一端，使两端认知一致） */
+async function upsertTombs(
+  ep: SyncEndpoint,
+  items: Array<{ tbl: string; row_id: string; deleted_at: string }>,
+): Promise<void> {
+  if (!items.length) return
+  const withUid = Boolean(ep.scopeUid)
+  const rows = items.map((x) => (withUid ? { ...x, user_id: ep.scopeUid } : x))
+  const conflict = withUid ? 'user_id,tbl,row_id' : 'tbl,row_id'
+  const res = await fetch(`${cleanBase(ep.base)}/${TOMB_TABLE}?on_conflict=${conflict}`, {
+    method: 'POST',
+    headers: { ...headers(ep), Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows),
+  })
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    console.warn(`[sync] 同步墓碑失败：${res.status} ${t.slice(0, 200)}`)
+  }
+}
+
+/**
+ * 行的更新时间是否晚于给定时间 —— 用于识别「删了之后又被改过」= 复活。
+ * 表没有更新时间列时返回 false（无法证明复活，按墓碑执行删除）。
+ */
+function newerThan(row: Row, ts: string, col: string | null): boolean {
+  if (!col) return false
+  const rv = row[col] ? new Date(String(row[col])).getTime() : 0
+  const tv = ts ? new Date(ts).getTime() : 0
+  return rv > tv
 }
 
 /** 行内容的稳定指纹（键排序后序列化），用于判断两边是否真的不同。
@@ -463,6 +573,7 @@ async function syncTable(
     cloudNewer: 0,
     nasNewer: 0,
     conflicts: 0,
+    deleted: 0,
     unchanged: 0,
   }
   const conflictRows: ConflictDetail[] = []
@@ -472,7 +583,7 @@ async function syncTable(
   /** 记一条写入明细：src=被写入的（较新）行，fromRow=对端现有旧行（无则 undefined=新增） */
   const mkDetail = (
     dir: 'toNas' | 'toCloud',
-    kind: 'add' | 'update',
+    kind: 'add' | 'update' | 'delete',
     src: Row,
     fromRow: Row | undefined,
   ): void => {
@@ -485,6 +596,32 @@ async function syncTable(
       kind,
       changes: changeList(fromRow, src),
     })
+  }
+
+  // 墓碑：本表相关的删除记录。表未建时两侧都是空 Map，退化为原有「只补不删」行为。
+  const tombC = shared.tombCloud ?? new Map<string, string>()
+  const tombN = shared.tombNas ?? new Map<string, string>()
+  const stale = shared.tombStale ?? new Set<string>()
+  /** 按对端墓碑要在「云端」删掉的 id */
+  const delCloud: string[] = []
+  /** 按对端墓碑要在「NAS」删掉的 id */
+  const delNas: string[] = []
+
+  // 子表孤儿保护：父案件/线索若在两端都已不存在（被删除），
+  // 子行即使只在一边也不补 —— 否则会复活一堆没人要的时间线/费用/材料。
+  const isChildTable =
+    table === 'contacts' ||
+    table === 'timeline' ||
+    table === 'expenses' ||
+    table === 'materials' ||
+    table === 'case_folders'
+  const parentAlive = (row: Row): boolean => {
+    if (!isChildTable) return true
+    const cid = row['case_id']
+    if (cid != null && shared.aliveCaseIds && !shared.aliveCaseIds.has(String(cid))) return false
+    const iid = row['intake_id']
+    if (iid != null && shared.aliveIntakeIds && !shared.aliveIntakeIds.has(String(iid))) return false
+    return true
   }
 
   const [cRowsAll, nRows] = await Promise.all([fetchAll(cloud, table), fetchAll(nas, table)])
@@ -506,11 +643,35 @@ async function syncTable(
   for (const id of ids) {
     const c = cMap.get(id)
     const n = nMap.get(id)
+    const key = tombKey(table, id)
+    const tc = tombC.get(key) // 云端曾删除过这行
+    const tn = tombN.get(key) // NAS 曾删除过这行
+
+    // 两端都还在 → 墓碑已过期（删了又改/又建），标记为待清理
+    if (c && n) {
+      if (tc) stale.add(key)
+      if (tn) stale.add(key)
+    }
+
     if (c && !n) {
+      // 云端有、NAS 没有：先看 NAS 是不是"删过"。
+      // NAS 删过 且 云端这行之后没再被改 → 判定为删除，云端也删（而不是补回 NAS）
+      if (tn && !newerThan(c, tn, UPDATED_COL[table])) {
+        delCloud.push(id)
+        mkDetail('toCloud', 'delete', c, undefined)
+        continue
+      }
+      if (!parentAlive(c)) continue // 父案件已不存在 → 不补孤儿
       toNas.push(c)
       stat.onlyCloud++
       mkDetail('toNas', 'add', c, undefined)
     } else if (n && !c) {
+      if (tc && !newerThan(n, tc, UPDATED_COL[table])) {
+        delNas.push(id)
+        mkDetail('toNas', 'delete', n, undefined)
+        continue
+      }
+      if (!parentAlive(n)) continue
       toCloud.push(n)
       stat.onlyNas++
       mkDetail('toCloud', 'add', n, undefined)
@@ -543,6 +704,21 @@ async function syncTable(
       }
     }
   }
+
+  // 删除传播：把对端已删除的行在本端删掉（先删，再补对端缺失的行）
+  if (delNas.length) await deleteRows(nas, table, delNas)
+  if (delCloud.length) await deleteRows(cloud, table, delCloud)
+  stat.deleted = delNas.length + delCloud.length
+
+  // 登记父表「存活 id」，供后面同步的子表做孤儿保护
+  const aliveIds = (): Set<string> => {
+    const alive = new Set<string>()
+    for (const id of cMap.keys()) if (!delCloud.includes(id)) alive.add(id)
+    for (const id of nMap.keys()) if (!delNas.includes(id)) alive.add(id)
+    return alive
+  }
+  if (table === 'cases') shared.aliveCaseIds = aliveIds()
+  if (table === 'intakes') shared.aliveIntakeIds = aliveIds()
 
   // 写 NAS（单用户库）：所有表都没有 user_id 列，必须剥掉，否则 400 PGRST204。
   // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
@@ -593,8 +769,13 @@ export async function runSync(
   const stats: TableSyncStat[] = []
   const conflicts: ConflictDetail[] = []
   const details: SyncItemDetail[] = []
-  const shared: SyncShared = { caseNames: new Map<string, string>() }
+  const shared: SyncShared = { caseNames: new Map<string, string>(), tombStale: new Set<string>() }
+  // 先读两端墓碑（未建表时返回空 Map，不影响同步本身）
+  const [tombCloud, tombNas] = await Promise.all([fetchTombs(cloud), fetchTombs(nas)])
+  shared.tombCloud = tombCloud
+  shared.tombNas = tombNas
   let written = 0
+  let deleted = 0
   let hasError = false
 
   for (const table of SYNC_TABLES) {
@@ -604,6 +785,7 @@ export async function runSync(
       conflicts.push(...conflictRows)
       details.push(...dRows)
       written += w
+      deleted += stat.deleted
       onTable?.(stat)
     } catch (e) {
       hasError = true
@@ -614,12 +796,44 @@ export async function runSync(
         cloudNewer: 0,
         nasNewer: 0,
         conflicts: 0,
+        deleted: 0,
         unchanged: 0,
         error: (e as Error).message || '同步失败',
       }
       stats.push(stat)
       onTable?.(stat)
     }
+  }
+
+  // 墓碑收尾：① 清掉已「复活」的墓碑 ② 把一端的删除记录补到另一端，使两端认知一致
+  try {
+    const stale = shared.tombStale ?? new Set<string>()
+    for (const key of stale) {
+      const idx = key.indexOf(':')
+      if (idx < 0) continue
+      const tbl = key.slice(0, idx)
+      const rowId = key.slice(idx + 1)
+      if (tombCloud.has(key)) await deleteTomb(cloud, tbl, rowId)
+      if (tombNas.has(key)) await deleteTomb(nas, tbl, rowId)
+    }
+    const toNasTombs: Array<{ tbl: string; row_id: string; deleted_at: string }> = []
+    const toCloudTombs: Array<{ tbl: string; row_id: string; deleted_at: string }> = []
+    for (const [key, ts] of tombCloud) {
+      if (tombNas.has(key) || stale.has(key)) continue
+      const idx = key.indexOf(':')
+      if (idx < 0) continue
+      toNasTombs.push({ tbl: key.slice(0, idx), row_id: key.slice(idx + 1), deleted_at: ts })
+    }
+    for (const [key, ts] of tombNas) {
+      if (tombCloud.has(key) || stale.has(key)) continue
+      const idx = key.indexOf(':')
+      if (idx < 0) continue
+      toCloudTombs.push({ tbl: key.slice(0, idx), row_id: key.slice(idx + 1), deleted_at: ts })
+    }
+    if (toNasTombs.length) await upsertTombs(nas, toNasTombs)
+    if (toCloudTombs.length) await upsertTombs(cloud, toCloudTombs)
+  } catch (e) {
+    console.warn('[sync] 墓碑收尾异常（不影响已完成的同步）', e)
   }
 
   return {
@@ -630,7 +844,51 @@ export async function runSync(
     conflictTotal: stats.reduce((s, x) => s + x.conflicts, 0),
     conflicts,
     written,
+    deleted,
     details,
+  }
+}
+
+/**
+ * 删除一行时，在「执行删除的那个后端」记一条墓碑 —— 供双向同步把这次删除传播到对端，
+ * 避免下次同步把已删除的数据当成"对端缺失"又补回来（复活）。
+ *
+ * 设计要点：
+ *  - 写到**当前生效的后端**（与删除行为同库），而不是写死云端；
+ *  - 云端（多租户）墓碑表有 user_id 列，NAS（单用户）没有 —— 先按带 user_id 试，
+ *    报 400 / 提示 user_id 就自动去掉重试，两种库都能用；
+ *  - 失败只告警，**不影响删除本身**（墓碑只是同步元数据）；表没建时同样静默跳过。
+ */
+export async function recordTombstone(table: SyncTable, rowId: number | string): Promise<void> {
+  try {
+    const b = cleanBase(resolveApi().base)
+    if (!b) return
+    const uid = currentUserId()
+    const body: Record<string, unknown> = { tbl: table, row_id: String(rowId) }
+    const post = async (withUid: boolean): Promise<Response> => {
+      const payload = withUid && uid ? { ...body, user_id: uid } : { ...body }
+      const conflict = withUid && uid ? 'user_id,tbl,row_id' : 'tbl,row_id'
+      return authedFetch(`${b}/${TOMB_TABLE}?on_conflict=${conflict}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(payload),
+      })
+    }
+    let res = await post(Boolean(uid))
+    if (!res.ok && uid) {
+      const t = await res.text().catch(() => '')
+      // 单用户库（NAS）没有 user_id 列 → 去掉 user_id 重试
+      if (res.status === 400 || /user_id/i.test(t)) res = await post(false)
+    }
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      console.warn(`[tombstone] 记录失败 ${table}/${rowId}：${res.status} ${t.slice(0, 200)}`)
+    }
+  } catch (e) {
+    console.warn('[tombstone] 记录异常（不影响删除本身）', e)
   }
 }
 
