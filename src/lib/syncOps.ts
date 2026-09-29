@@ -179,6 +179,25 @@ async function upsert(ep: SyncEndpoint, table: SyncTable, rows: Row[]): Promise<
   }
 }
 
+/**
+ * 写完后把云端自增序列顶到 max(id)+1，防止 BY DEFAULT 下同步写入的高 id
+ * 之后被云端原生 INSERT 自增撞号。仅在云端（多租户）侧调用；非致命（失败只告警）。
+ */
+async function bumpSeq(ep: SyncEndpoint, table: SyncTable): Promise<void> {
+  try {
+    const res = await fetch(`${cleanBase(ep.base)}/rpc/sync_bump_seq?p_tbl=${table}`, {
+      method: 'POST',
+      headers: headers(ep),
+    })
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      console.warn(`[sync] bumpSeq ${table} 失败 ${res.status} ${t.slice(0, 200)}`)
+    }
+  } catch (e) {
+    console.warn(`[sync] bumpSeq ${table} 异常`, e)
+  }
+}
+
 /** 行内容的稳定指纹（键排序后序列化），用于判断两边是否真的不同。
  *  user_id 是「实例本地」字段（各库 auth.uid() 不同），不参与两边比对，
  *  否则同一条数据会因 uid 不同被误判为「两边都改过」→ 冲突。 */
@@ -215,6 +234,17 @@ function withOwner(rows: Row[], uid: string | null): Row[] {
     const v = r['user_id']
     if (typeof v === 'string' && v) return r
     if (uid) return { ...r, user_id: uid }
+    const rest = { ...r }
+    delete rest['user_id']
+    return rest
+  })
+}
+
+/** 写 NAS（单用户库）前剥掉 user_id 列：单用户库所有表都没有该列，
+ *  带上会触发 PostgREST 400 PGRST204「Could not find the 'user_id' column」。 */
+function stripOwner(rows: Row[]): Row[] {
+  return rows.map((r) => {
+    if (!('user_id' in r)) return r
     const rest = { ...r }
     delete rest['user_id']
     return rest
@@ -396,7 +426,7 @@ async function syncTable(
   if (table === 'cases') rememberCases([...cMap.values(), ...nMap.values()], caseNames)
 
   const ids = new Set<string>([...cMap.keys(), ...nMap.keys()])
-  const toCloud: Row[] = []
+  let toCloud: Row[] = []
   const toNas: Row[] = []
 
   for (const id of ids) {
@@ -436,11 +466,23 @@ async function syncTable(
     }
   }
 
-  if (toNas.length) await upsert(nas, table, withOwner(toNas, sampleUid(nRows)))
+  // 写 NAS（单用户库）：所有表都没有 user_id 列，必须剥掉，否则 400 PGRST204。
+  // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
+  if (toNas.length) {
+    const stripped = stripOwner(toNas)
+    const rows = table === 'vault_meta' ? stripped.map((r) => ({ ...r, id: 1 })) : stripped
+    await upsert(nas, table, rows)
+  }
+  // vault_meta 不回写云端：NAS 是单用户库（vault_meta 仅 id=1 一行），若把 NAS 的 id=1
+  // 按 user_id 插回多租户云端会造出游离行、破坏 vault 单行使不变式。仅做 云端→NAS 单向同步，
+  // 保证在 NAS 上也能用同一保险箱口令解密。其余表正常双向。
+  if (table === 'vault_meta') toCloud = []
   // 写回多租户云端时显式带上自己的 uid（service_role 下 auth.uid() 为 null，列默认值救不了）。
-  // 仅限有 user_id 列的根表——子表加上该字段会被 PostgREST 以「列不存在」拒绝。
   const cloudUid = SCOPED_TABLES.has(table) ? cloud.scopeUid || sampleUid(cRows) : sampleUid(cRows)
-  if (toCloud.length) await upsert(cloud, table, withOwner(toCloud, cloudUid))
+  if (toCloud.length) {
+    await upsert(cloud, table, withOwner(toCloud, cloudUid))
+    await bumpSeq(cloud, table)
+  }
 
   return { stat, written: toNas.length + toCloud.length, conflictRows }
 }

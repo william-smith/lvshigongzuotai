@@ -11,13 +11,51 @@ import { customConfigured, resolveApi } from './apiConfig'
  * 生效后端：默认云端公开库（多租户）；role=nas 且本人填过自建库并显式切换时才走自建库。
  * 模块顶层解析一次，切换后端由 Settings 写入 localStorage 后整页刷新生效。
  */
-const { base: REST_BASE, key: ANON_KEY } = resolveApi()
+const { base: REST_BASE, key: ANON_KEY, backend: ACTIVE_BACKEND } = resolveApi()
 const AUTH_BASE = REST_BASE ? REST_BASE.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : ''
 
 /** 只有接了云端才需要登录；本地演示数据直接放行 */
 export const authEnabled = Boolean(AUTH_BASE && ANON_KEY)
 
-const STORAGE = 'lw.auth.v1'
+/**
+ * 登录会话按后端隔离：云端与自建库由不同的 GoTrue 实例签发 JWT（密钥不同），
+ * 若共用一把全局会话，切到自建库后仍会拿云端的 token 去请求自建库——
+ * 自建库验不过签名 → 401 → 取不到案件。
+ * 因此每个后端各存一份会话（key 带后端标签），切换后端后各自独立登录。
+ */
+function sessionTag(): string {
+  if (ACTIVE_BACKEND === 'cloud') return 'cloud'
+  try {
+    const host = new URL(REST_BASE || '').host
+    return 'nas-' + host.replace(/[^a-z0-9]/gi, '_')
+  } catch {
+    return 'nas'
+  }
+}
+const STORAGE = `lw.auth.v1.${sessionTag()}`
+const TEMP = `lw.auth.temp.${sessionTag()}`
+
+// 一次性迁移：把旧的全局会话键迁移到按后端命名的新键，避免老用户被强制登出。
+;(function migrateLegacySession() {
+  try {
+    if (ACTIVE_BACKEND === 'cloud' && !localStorage.getItem(STORAGE)) {
+      const legacy = localStorage.getItem('lw.auth.v1')
+      if (legacy) {
+        localStorage.setItem(STORAGE, legacy)
+        localStorage.removeItem('lw.auth.v1')
+      }
+    }
+    if (ACTIVE_BACKEND === 'cloud' && !sessionStorage.getItem(TEMP)) {
+      const lt = sessionStorage.getItem('lw.auth.temp')
+      if (lt) {
+        sessionStorage.setItem(TEMP, lt)
+        sessionStorage.removeItem('lw.auth.temp')
+      }
+    }
+  } catch {
+    /* 隐私模式读不了就算了 */
+  }
+})()
 
 export interface Session {
   access_token: string
@@ -92,7 +130,31 @@ export function currentUserId(): string | null {
   return typeof sub === 'string' && sub ? sub : null
 }
 
-const TEMP = 'lw.auth.temp'
+/**
+ * 云端账号 uid（多租户库归属用）。
+ *
+ * 与 currentUserId() 的关键区别：currentUserId() 读的是「当前生效后端」的会话——
+ * 在 NAS 模式下读到的其实是 NAS 自建库的 uid，把它写进云端库后，云端 RLS
+ * （user_id = auth.uid()）会把这串外来 uid 的行全部过滤掉，切回云端登录就看不到数据
+ * （2026-09-29 排查确认的根因）。
+ *
+ * 这里**固定读云端会话键 `lw.auth.v1.cloud`**，不论当前是在 NAS 还是云端模式，
+ * 保证同步给云端行打上的一定是「云端本人账号的 uid」。
+ * 云端会话即便已过期也无妨——只取 uid 字符串，同步本身用 service_role 鉴权，不依赖它。
+ */
+export function cloudAccountUid(): string | null {
+  try {
+    const raw = localStorage.getItem('lw.auth.v1.cloud')
+    if (!raw) return null
+    const s = parse(raw)
+    if (!s?.access_token) return null
+    const p = decodeJwtPayload(s.access_token)
+    const sub = p?.sub
+    return typeof sub === 'string' && sub ? sub : null
+  } catch {
+    return null
+  }
+}
 
 function parse(raw: string | null): Session | null {
   if (!raw) return null

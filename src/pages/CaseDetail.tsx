@@ -52,6 +52,7 @@ export function CaseDetail({
   data,
   onBack,
   onEdit,
+  onDelete,
   onCreateTimeline,
   onEditTimeline,
   onDeleteTimeline,
@@ -66,6 +67,8 @@ export function CaseDetail({
   /** 在序列末尾（最后一个子页签）继续左滑时退出详情：动效方向为向左滑出 */
   onExitBySwipe?: () => void
   onEdit: () => void
+  /** 删除该案件（含二次确认，级联删除其下时间线/费用/材料） */
+  onDelete: () => void
   onCreateTimeline: () => void
   onEditTimeline: (t: TimelineRow) => void
   onDeleteTimeline: (id: number) => void
@@ -312,6 +315,14 @@ export function CaseDetail({
         >
           <Icon name="settings" className="w-4 h-4" />
           编辑
+        </button>
+        <button
+          onClick={onDelete}
+          title="删除案件"
+          className="h-9 px-3 rounded-lg border border-line text-sm text-danger hover:bg-[#FEF2F2] hover:border-[#FECACA] flex items-center gap-1.5"
+        >
+          <Icon name="close" className="w-4 h-4" />
+          删除
         </button>
         <button
           onClick={() => setAgentOpen(true)}

@@ -1,4 +1,5 @@
 import { API_BASE, isCloud } from './data'
+import { activeBackend } from './apiConfig'
 import {
   CRYPTO_ITERATIONS,
   CRYPTO_SALT,
@@ -59,17 +60,32 @@ async function patchRow(table: string, id: number, patch: Record<string, unknown
 }
 
 /**
- * 更新「自己那一条」保险箱元数据 —— 按 user_id 定位。
+ * 保险箱元数据行的定位方式：
+ *   - 云端（多租户）：按 `user_id` 定位自己的那一行；
+ *   - 自建库（单用户）：`vault_meta` 只有 `id=1` 一行、无 `user_id` 列，按 `id=1` 定位。
+ * 混用会导致一端用另一端不存在的列查询而 400。
+ */
+function isSingleUserVault(): boolean {
+  return activeBackend() === 'custom'
+}
+
+/**
+ * 更新「自己那一条」保险箱元数据。
  *
- * 为什么不能按 id=1：那是单人时代的写法。多租户库里 id=1 属于最先建保险箱的人，
- * 别人按 id=1 去改，要么撞主键、要么被 RLS 拒绝（RLS 只允许改 user_id = 自己的行），
- * 表现就是「设置敏感信息密码失败」。
+ * 云端按 user_id 定位（多租户隔离，不能写死 id=1——那属于最先建保险箱的人，
+ * 别人写会撞主键或被 RLS 拒绝）；自建库单用户则按 id=1 定位（表无 user_id 列）。
  */
 async function patchVaultMeta(patch: Record<string, unknown>): Promise<void> {
   if (!API_BASE) return
-  const uid = currentUserId()
-  if (!uid) throw new Error('尚未登录')
-  const res = await authedFetch(`${API_BASE}/vault_meta?user_id=eq.${uid}`, {
+  let filter: string
+  if (isSingleUserVault()) {
+    filter = 'id=eq.1'
+  } else {
+    const uid = currentUserId()
+    if (!uid) throw new Error('尚未登录')
+    filter = `user_id=eq.${uid}`
+  }
+  const res = await authedFetch(`${API_BASE}/vault_meta?${filter}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
     body: JSON.stringify(patch),
@@ -196,10 +212,11 @@ export async function reencryptVault(
 }
 
 /**
- * 首次设置保险箱口令：本机派生密钥 → 生成校验串 → 写入云端 vault_meta。
+ * 首次设置保险箱口令：本机派生密钥 → 生成校验串 → 写入 vault_meta。
  *
- * 按 **user_id** 定位自己的那一行（on_conflict=user_id），不再写死 id=1——
+ * 云端按 **user_id** 定位自己的那一行（on_conflict=user_id），不再写死 id=1——
  * 多租户库里 id=1 会被第一个建保险箱的人占用，其他人再写就撞主键或被 RLS 拒绝。
+ * 自建库单用户则按 id=1（on_conflict=id），表无 user_id 列。
  * 与 reencryptVault 写 verifier 用的是同一张表同一行，区别是这里不需要旧口令，
  * 用于「换台全新设备、且从未设过保险箱口令」时把保险箱初始化出来。
  *
@@ -217,17 +234,20 @@ export async function setupVault(
   try {
     const key = await deriveKey(passphrase)
     const verifier = await encryptString(key, VERIFIER_PLAIN)
-    const uid = currentUserId()
-    if (!uid) return { ok: false, error: '尚未登录，请先登录再设置保险箱口令' }
-    const res = await authedFetch(`${API_BASE}/vault_meta?on_conflict=user_id`, {
+    const row = { verifier_enc: verifier, iterations: CRYPTO_ITERATIONS, salt: CRYPTO_SALT }
+    // 自建库单用户：vault_meta 仅 id=1 一行（无 user_id 列）；云端按 user_id 隔离。
+    const { url, body } = isSingleUserVault()
+      ? { url: `${API_BASE}/vault_meta?on_conflict=id`, body: { id: 1, ...row } }
+      : (() => {
+          const uid = currentUserId()
+          if (!uid) return { url: '', body: null as unknown as Record<string, unknown> }
+          return { url: `${API_BASE}/vault_meta?on_conflict=user_id`, body: { user_id: uid, ...row } }
+        })()
+    if (!url) return { ok: false, error: '尚未登录，请先登录再设置保险箱口令' }
+    const res = await authedFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify({
-        user_id: uid,
-        verifier_enc: verifier,
-        iterations: CRYPTO_ITERATIONS,
-        salt: CRYPTO_SALT,
-      }),
+      body: JSON.stringify(body),
     })
     if (res.status === 401 || res.status === 403) {
       return { ok: false, error: '登录已失效，请重新登录' }

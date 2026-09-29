@@ -22,6 +22,7 @@ import { ExpenseEditor } from './pages/ExpenseEditor'
 import { MaterialsView } from './pages/MaterialsView'
 import { Settings } from './pages/Settings'
 import { deleteTimeline } from './lib/timelineOps'
+import { deleteCase } from './lib/caseOps'
 import { deleteExpense, decryptExpenses } from './lib/expenseOps'
 
 /** 刷新后恢复上次停留的界面（顶部 tab + 是否打开案件详情） */
@@ -62,6 +63,25 @@ function Shell() {
     if (e.target !== e.currentTarget) return
     setTrans(null)
   }
+
+  /**
+   * 过渡兜底：动画时长 0.55s，正常由进入面板的 animationend 调用 endTransition 收尾。
+   * 但只要有**一次** animationend 没派发（动画被重渲染打断、标签页切后台、浏览器差异），
+   * trans 就会永久非空——而它同时把内容容器置为 pointer-events-none，并让
+   * goto / openCase / backFromCase 全部 `if (trans) return`，表现为「弹窗关掉后整页点不动」。
+   * 这里加安全定时器：超时强制收尾，保证界面永不因一次漏掉的动画而卡死。
+   */
+  useEffect(() => {
+    if (!trans) return
+    const t = window.setTimeout(() => setTrans(null), 800)
+    return () => window.clearTimeout(t)
+  }, [trans])
+
+  /** 打开任一编辑弹层时，若还有未完成的视图切换，直接收尾：
+   *  避免弹层的重渲染把正在跑的过渡动画打断、导致 animationend 丢失。 */
+  useEffect(() => {
+    if (editing !== undefined || editingIntake !== undefined) setTrans(null)
+  }, [editing, editingIntake])
 
   // 费用金额是密文入库的：原始数据（含 *_enc）留一份在 ref 里，
   // 解锁/加锁时用它重新解密——加锁后再解锁不能把金额变成 null。
@@ -214,6 +234,13 @@ function Shell() {
                   <Icon name="settings" className="w-4 h-4" />
                 </button>
                 <button
+                  onClick={() => requestDeleteCase(cur.id)}
+                  className="w-9 h-9 flex items-center justify-center text-danger"
+                  title="删除案件"
+                >
+                  <Icon name="close" className="w-4 h-4" />
+                </button>
+                <button
                   onClick={unlocked ? lock : requestUnlock}
                   className={`w-9 h-9 flex items-center justify-center ${unlocked ? 'text-brand' : 'text-ink-2'}`}
                   title={unlocked ? '锁定敏感信息' : '解锁敏感信息'}
@@ -229,6 +256,7 @@ function Shell() {
             onBack={backFromCase}
             onExitBySwipe={() => backFromCase('l')}
             onEdit={() => setEditing(cur)}
+            onDelete={() => requestDeleteCase(cur.id)}
             onCreateTimeline={() => setEditingTimeline(null)}
             onEditTimeline={(t) => setEditingTimeline(t)}
             onDeleteTimeline={requestDeleteTimeline}
@@ -320,6 +348,25 @@ function Shell() {
     setData((prev) => (prev ? { ...prev, cases: prev.cases.filter((c) => c.id !== id) } : prev))
     setEditing(undefined)
     setCaseId(null)
+  }
+  const doDeleteCase = async (id: number) => {
+    try {
+      await deleteCase(id)
+    } catch (e) {
+      window.alert('删除失败：' + (e as Error).message)
+      return
+    }
+    onCaseDeleted(id)
+  }
+  const requestDeleteCase = (id: number) => {
+    const c = data?.cases.find((x) => x.id === id)
+    if (
+      !window.confirm(
+        `确认删除案件「${c?.client ?? ''}」？\n\n其下的时间线、费用、材料将被一并级联删除，此操作不可撤销。`,
+      )
+    )
+      return
+    void doDeleteCase(id)
   }
 
   // 接案保存/删除回写

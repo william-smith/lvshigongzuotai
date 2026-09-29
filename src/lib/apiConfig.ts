@@ -23,9 +23,30 @@ function clean(v: string | undefined | null): string {
   return (v ?? '').trim().replace(/\/+$/, '')
 }
 
+/**
+ * 把自建库 REST 基址归一化：Supabase/PostgREST 必须以 `/rest/v1` 结尾。
+ *
+ * 用户手填时常漏掉 `/rest/v1`（如只填 `https://host:16666`），或把云端 CF 函数代理
+ * 的 `/api` 前缀也带进来（`https://host/api`）——自建库直连 kong 不需要 `/api`。
+ * 这里统一收口：去掉多余 `/api`、补上 `/rest/v1`，避免「地址填了但案件拉不到」这类
+ * 因后缀不对导致的 404/空数据（曾发生在手机端：漏填 /rest/v1）。
+ */
+function normalizeBase(v: string | undefined | null): string {
+  let s = clean(v)
+  if (!s) return ''
+  if (s.endsWith('/api')) s = s.slice(0, -'/api'.length)
+  if (!s.endsWith('/rest/v1')) s += '/rest/v1'
+  return s
+}
+
+/** 供同步等模块复用：把用户手填的 PostgREST 基址归一化为以 /rest/v1 结尾 */
+export function normalizeRestBase(v: string | undefined | null): string {
+  return normalizeBase(v)
+}
+
 /** 云端公开库：构建期注入，所有人共用 */
 const CLOUD = {
-  base: clean(import.meta.env.VITE_API_BASE as string | undefined),
+  base: normalizeBase(import.meta.env.VITE_API_BASE as string | undefined),
   key: (import.meta.env.VITE_API_KEY as string | undefined)?.trim() ?? '',
 }
 
@@ -41,7 +62,7 @@ export function readCustom(): CustomBackend {
     const raw = localStorage.getItem(STORAGE_CUSTOM)
     if (!raw) return { base: '', key: '' }
     const p = JSON.parse(raw) as Partial<CustomBackend>
-    return { base: clean(p.base), key: (p.key ?? '').trim() }
+    return { base: normalizeBase(p.base), key: (p.key ?? '').trim() }
   } catch {
     return { base: '', key: '' }
   }
@@ -49,7 +70,7 @@ export function readCustom(): CustomBackend {
 
 export function writeCustom(c: CustomBackend): void {
   try {
-    localStorage.setItem(STORAGE_CUSTOM, JSON.stringify({ base: clean(c.base), key: c.key.trim() }))
+    localStorage.setItem(STORAGE_CUSTOM, JSON.stringify({ base: normalizeBase(c.base), key: c.key.trim() }))
   } catch {
     /* 隐私模式写不了：只在本次会话内不持久化 */
   }

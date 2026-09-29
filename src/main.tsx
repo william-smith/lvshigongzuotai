@@ -4,7 +4,11 @@ import App from './App'
 import { VaultProvider } from './store/vault'
 import { AmountPrivacyProvider } from './components/SecretMoney'
 import { API_BASE } from './lib/data'
+import { checkAppVersion } from './lib/versionCheck'
 import './index.css'
+
+// 启动即比对构建版本：线上有更新则自动刷新，避免长期跑旧包
+checkAppVersion()
 
 // 最早时机与数据接口建连：省掉首次 fetch 的 DNS+TCP+TLS 握手（约一个 RTT）。
 // 用 API_BASE 推导域名，换平台（CloudBase/MemFire）时自动适配，无需写死。
@@ -26,6 +30,13 @@ if (API_BASE) {
 if (import.meta.env.PROD && 'serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {})
+    // 新 SW 接管后兜底重载一次，确保旧内存包被新包替换（sw.js 内也会主动 navigate）
+    let reloaded = false
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return
+      reloaded = true
+      location.reload()
+    })
   })
 }
 

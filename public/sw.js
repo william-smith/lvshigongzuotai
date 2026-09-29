@@ -3,7 +3,9 @@
 //  - 同源静态资源（js/css/html/图片/字体）：stale-while-revalidate（先返回缓存，后台静默刷新）
 //  - 导航请求（index.html）：网络优先，离线时回退已缓存的壳
 //  - 跨域请求（Supabase 等）：一律放行走实时网络，敏感数据不进缓存
-const CACHE = 'lw-shell-v1'
+// {{BUILD_HASH}} 由构建脚本在 vite closeBundle 时替换为本次构建哈希，
+// 使每次部署使用独立缓存名 → 旧缓存自动失效，静态资源必定拉新。
+const CACHE = 'lw-shell-{{BUILD_HASH}}'
 const ASSET_RE = /\.(?:js|css|html|htm|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf|eot|json)$/i
 
 self.addEventListener('install', (event) => {
@@ -19,7 +21,14 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
+      .then(() => {
+        // 新 SW 接管后，让所有已打开的页面跳回自身 URL 重新加载，
+        // 从而拉取新版本的 HTML/JS —— 用户无需手动硬刷（旧包能自动被替换）。
+        return self.clients
+          .matchAll({ type: 'window', includeUncontrolled: true })
+          .then((cs) => Promise.all(cs.map((c) => (c.navigate ? c.navigate(c.url).catch(() => {}) : Promise.resolve()))))
+      }),
   )
 })
 
@@ -30,6 +39,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url)
   // 只处理同源请求；跨域（Supabase / CDN）直接走网络
   if (url.origin !== self.location.origin) return
+
+  // 版本清单：永远走网络，供应用自检是否需要刷新（绝不能进 stale-while-revalidate 缓存成旧值）
+  if (url.pathname === '/version.json') {
+    event.respondWith(fetch(req, { cache: 'no-store' }).catch(() => new Response('', { status: 504 })))
+    return
+  }
 
   // 导航：网络优先，失败回退缓存壳
   if (req.mode === 'navigate') {

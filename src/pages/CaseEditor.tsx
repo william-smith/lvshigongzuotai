@@ -100,6 +100,8 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
   }, [onClose])
 
   useEffect(() => {
+    // 触屏设备不自动聚焦：一进编辑页就弹软键盘，会把底部弹层顶部（返回/删除 按钮）顶出可视区
+    if (typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches) return
     firstFieldRef.current?.focus()
   }, [])
 
@@ -197,7 +199,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
       <form
         ref={swipeRef}
         onSubmit={submit}
-        className="relative w-full md:max-w-xl bg-white md:rounded-2xl rounded-t-2xl shadow-pop flex flex-col max-h-[92vh] overflow-hidden"
+        className="relative w-full md:max-w-xl bg-white md:rounded-2xl rounded-t-2xl shadow-pop flex flex-col lw-sheet overflow-hidden"
       >
         {/* 顶栏 */}
         <div className="flex items-center gap-2 h-14 px-4 md:px-5 border-b border-line shrink-0">

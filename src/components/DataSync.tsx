@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Icon } from './Icon'
 import { runSync, type SyncReport, type TableSyncStat } from '../lib/syncOps'
-import { readCustom } from '../lib/apiConfig'
-import { currentUserId } from '../lib/auth'
+import { readCustom, normalizeRestBase } from '../lib/apiConfig'
+import { cloudAccountUid } from '../lib/auth'
 
 /**
  * 云端公开库 ↔ 自建库 的双向增量同步（仅 role=nas 的账号可见）。
@@ -47,6 +47,13 @@ export function DataSync() {
       setErr('请填写两边的 service_role token（同步需要绕过 RLS 的全表读写权限）')
       return
     }
+    // 同步给云端行打「归属 uid」必须取自云端本人账号，不能用当前 NAS 会话的 uid，
+    // 否则写进云端的行主人是 NAS uid，切回云端登录后 RLS 按 auth.uid() 过滤会整批看不见。
+    const cloudUid = cloudAccountUid()
+    if (!cloudUid) {
+      setErr('请先「切换数据源到云端」并登录你的云端账号，再回来执行同步——同步需要用你的云端 uid 标记归属。')
+      return
+    }
     setRunning(true)
     setLog([])
     setReport(null)
@@ -57,10 +64,12 @@ export function DataSync() {
           base: cloudBase,
           token: cloudToken.trim(),
           anonKey: CLOUD_ANON || undefined,
-          scopeUid: currentUserId() ?? undefined,
+          scopeUid: cloudUid,
         },
-        // 自建库是本人独用，全表都是自己的，不做归属过滤
-        { base: nasBase, token: nasToken.trim(), anonKey: readCustom().key || undefined },
+        // 自建库是本人独用，全表都是自己的，不做归属过滤。
+        // 基址强制归一化：手填漏 /rest/v1（或多写 /api）会打到反代的 HTML 页上，
+        // 表现为全部表报 `Unexpected token '<' … not valid JSON`。
+        { base: normalizeRestBase(nasBase), token: nasToken.trim(), anonKey: readCustom().key || undefined },
         (s) => setLog((l) => [...l, s]),
       )
       setReport(r)
