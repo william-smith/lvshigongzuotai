@@ -178,6 +178,7 @@ export function DataSync() {
                   <th className="text-right font-medium px-2 py-1.5">补→云</th>
                   <th className="text-right font-medium px-2 py-1.5">云较新</th>
                   <th className="text-right font-medium px-2 py-1.5">NAS较新</th>
+                  <th className="text-right font-medium px-2 py-1.5">删除</th>
                   <th className="text-right font-medium px-2 py-1.5">冲突</th>
                   <th className="text-right font-medium px-2 py-1.5">一致</th>
                 </tr>
@@ -187,7 +188,7 @@ export function DataSync() {
                   <tr key={s.table} className="border-t border-line">
                     <td className="px-2.5 py-1.5 text-ink font-mono">{s.table}</td>
                     {s.error ? (
-                      <td colSpan={6} className="px-2 py-1.5 text-right text-danger">
+                      <td colSpan={7} className="px-2 py-1.5 text-right text-danger">
                         {s.error}
                       </td>
                     ) : (
@@ -196,6 +197,11 @@ export function DataSync() {
                         <td className="px-2 py-1.5 text-right tabular-nums text-ink-2">{s.onlyNas || ''}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-ink-2">{s.cloudNewer || ''}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-ink-2">{s.nasNewer || ''}</td>
+                        <td
+                          className={`px-2 py-1.5 text-right tabular-nums ${s.deleted ? 'text-danger font-medium' : 'text-ink-2'}`}
+                        >
+                          {s.deleted || ''}
+                        </td>
                         <td
                           className={`px-2 py-1.5 text-right tabular-nums ${s.conflicts ? 'text-warn font-medium' : 'text-ink-2'}`}
                         >
