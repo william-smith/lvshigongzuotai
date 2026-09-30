@@ -512,15 +512,6 @@ export function MaterialsView({
         <div className="hidden md:flex h-14 items-center px-6 bg-white border-b border-line sticky top-0 z-10 gap-3">
           <h1 className="text-[15px] font-semibold">文书与证据</h1>
           <span className="text-xs text-ink-3">按 8 类归集 · 原件留在本机</span>
-          <button
-            onClick={() => setEditing(true)}
-            className={`ml-auto h-8 px-3 rounded-lg border text-xs hover:bg-canvas ${
-              folderRow ? 'border-brand/40 text-brand bg-brand/5' : 'border-line text-ink-2'
-            }`}
-            title={folderRow ? `已配置：${folderRow.folder_name}` : '配置案件文件夹映射'}
-          >
-            文件夹路径{folderRow ? ` · ${folderRow.folder_name}` : ''}
-          </button>
         </div>
       )}
 
