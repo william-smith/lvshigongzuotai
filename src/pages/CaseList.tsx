@@ -350,7 +350,9 @@ export function CaseList({
               <div className="flex items-center gap-2 mt-2.5 text-xs text-ink-3">
                 <Icon name="clock" className="w-3.5 h-3.5" />
                 {isTerminal(c) ? (
-                  <span className="truncate flex-1">已结案</span>
+                  <span className="truncate flex-1">
+                    {normalizeStage(c.stage) === '解除委托' ? '已解除委托' : '已结案'}
+                  </span>
                 ) : (
                   <>
                     <span className="truncate flex-1">{c.next_action || '暂无待办'}</span>
