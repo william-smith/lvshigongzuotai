@@ -32,7 +32,7 @@ export function Dashboard({
     { label: '在办案件', value: stats.active },
     { label: '本月节点', value: stats.thisMonth },
     { label: '临期事项', value: stats.dueSoon.length },
-    { label: '已结案', value: stats.closed },
+    { label: '已结案/已解除委托', value: stats.closed },
   ]
 
   return (
