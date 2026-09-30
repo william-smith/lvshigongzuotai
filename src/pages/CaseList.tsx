@@ -114,14 +114,14 @@ export function CaseList({
     { key: 'all', label: '全部', n: stats.total },
     { key: 'active', label: '在办', n: stats.active },
     { key: 'due', label: '临期', n: stats.dueSoon.length },
-    { key: 'closed', label: '已结案/解除委托', n: stats.closed },
+    { key: 'closed', label: '已结案/已解除委托', n: stats.closed },
   ]
 
   const cards = [
     { label: '在办案件', value: stats.active, hint: `共 ${stats.total} 件` },
     { label: '本月节点', value: stats.thisMonth, hint: '开庭 / 提交 / 答复' },
     { label: '临期事项', value: stats.dueSoon.length, hint: '已逾期 / 7 天内到期' },
-    { label: '已结案', value: stats.closed, hint: '可归档' },
+    { label: '已结案/已解除委托', value: stats.closed, hint: '可归档' },
   ]
 
   const sortMenu = (
@@ -134,7 +134,7 @@ export function CaseList({
       <div className="hidden md:flex h-14 items-center gap-4 px-6 bg-white border-b border-line sticky top-0 z-10">
         <h1 className="text-[15px] font-semibold shrink-0">案件台账</h1>
         <span className="text-xs text-ink-3 shrink-0">
-          共 {stats.total} 件 · 在办 {stats.active} · 临期 {stats.dueSoon.length} · 待归档 {stats.closed}
+          共 {stats.total} 件 · 在办 {stats.active} · 临期 {stats.dueSoon.length}
         </span>
         <div className="flex-1" />
         <div className="relative w-64">
