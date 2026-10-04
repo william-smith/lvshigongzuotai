@@ -1,0 +1,8 @@
+
+  - name: calendar-ics
+    url: http://cal-ics:8899/
+    routes:
+      - name: calendar-ics-all
+        strip_path: false
+        paths:
+          - /calendar.ics

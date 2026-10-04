@@ -117,3 +117,15 @@ export function resolveApi(): { base: string; key: string; backend: BackendId } 
   }
   return { base: CLOUD.base, key: CLOUD.key, backend: 'cloud' }
 }
+
+/**
+ * 取指定后端的 base/key（日历订阅等需要「显式选云端或自建库」的跨后端场景复用）。
+ * 不依赖当前生效后端，避免 toggling 时误打到另一边的库。
+ */
+export function apiFor(backend: BackendId): { base: string; key: string } {
+  if (backend === 'custom') {
+    const c = readCustom()
+    return { base: c.base, key: c.key }
+  }
+  return { base: CLOUD.base, key: CLOUD.key }
+}

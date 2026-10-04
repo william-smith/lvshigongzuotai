@@ -1,0 +1,75 @@
+# NAS 端 CalDAV 服务（Radicale）
+#
+# 为什么不用现成第三方镜像：NAS 上 Docker Hub 直连不通，
+# 只有 docker.m.daocloud.io/library/* 这类官方库镜像能拉；
+# Radicale 是纯 Python 包，所以直接用已拉好的 python:3.12-alpine 自己装。
+#
+# 部署：
+#   mkdir -p /vol1/1000/docker/caldav && 放本目录所有文件进来
+#   sudo 不可用时用：sudo chown -R 65534:65534 data  （数据目录要能给容器内 nobody 写）
+#   docker compose build && docker compose up -d
+#
+# 数据同步由宿主机 cron 调 sync_caldav.py（走本机回环 127.0.0.1:5232），无需进容器。
+
+services:
+  caldav:
+    build: .
+    image: nas-radicale:latest
+    container_name: caldav
+    restart: unless-stopped
+
+    # 与宿主机 admin(1000:1001) 对齐，数据卷无需 sudo chown
+    user: "1000:1001"
+
+    environment:
+      HOME: /tmp
+      # 容器默认 UTC，日志会比北京时间晚 8 小时
+      TZ: Asia/Shanghai
+
+    ports:
+      # 只绑回环：公网访问由 Kong 的 /dav 路由代理，局域网扫不到
+      - "127.0.0.1:5232:5232"
+
+    volumes:
+      - ./radicale.config:/config/config:ro
+      - ./users:/config/users:ro
+      - ./data:/data
+      # 与宿主机（fnOS）保持一致时区
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request;urllib.request.urlopen('http://127.0.0.1:5232/',timeout=3).read()",
+        ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    # 接入 Supabase 的网络，Kong 才能用容器名 caldav 反代（与 cal-ics 同路子）
+    networks:
+      - supabase
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  supabase:
+    external: true
+    name: supabase-selfhosted_default

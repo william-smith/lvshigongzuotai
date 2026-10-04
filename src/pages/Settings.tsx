@@ -2,18 +2,18 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { authEnabled, changePassword, useAuth } from '../lib/auth'
 import { isCloud } from '../lib/data'
-import {
-  activeBackend,
-  clearCustom,
-  customConfigured,
-  readCustom,
-  setBackend,
-  writeCustom,
-  type BackendId,
-} from '../lib/apiConfig'
+import { activeBackend, clearCustom, readCustom, writeCustom } from '../lib/apiConfig'
 import { DataSync } from '../components/DataSync'
 import { deriveKey, persistKey, verifyKey } from '../lib/crypto'
 import { reencryptVault } from '../lib/vault'
+import {
+  clearLocalToken,
+  currentBackend,
+  ensureToken,
+  revokeToken,
+  subscriptionConfigured,
+  subscriptionUrl,
+} from '../lib/ical'
 
 /** 设置页分组容器：统一的小标题 + 图标 + 描述，下面卡片堆叠 */
 function Section({
@@ -124,128 +124,233 @@ function ProfileCard() {
 }
 
 /**
- * 数据源（后端）卡 —— **仅 role=nas 的账号可见**。
- *
- * 正常律师一律用云端公开库（多租户 + RLS 行级隔离）。
- * 具备 nas 角色的账号可额外切到自己搭建的自建库：地址与 anon key 由本人填写，
- * 只写进本人浏览器的 localStorage，**不进公开构建包**，也不会上传给任何人。
+ * 自建库配置卡 —— **仅自建库（NAS）模式**出现。
+ * 只负责「查看 / 修改 / 清除自建库的地址与密钥」；**数据源切换统一在登录页**，这里不重复。
+ * 地址与密钥只保存在本机浏览器。保存后整页刷新，让新地址 / 密钥立即生效。
  */
 function BackendCard() {
-  const [backend, setB] = useState<BackendId>('cloud')
   const [base, setBase] = useState('')
   const [key, setKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    setB(activeBackend())
     const c = readCustom()
     setBase(c.base)
     setKey(c.key)
   }, [])
 
-  const configured = customConfigured()
-
   function saveCustom() {
     writeCustom({ base: base.trim(), key: key.trim() })
     setSaved(true)
-    window.setTimeout(() => setSaved(false), 2000)
+    // 刷新后新地址 / 密钥才生效（各数据模块在顶层解析一次）
+    window.setTimeout(() => window.location.reload(), 900)
   }
 
-  /** 切换后端：写选择后整页刷新，让各数据模块在顶层重新解析生效地址 */
-  function switchTo(id: BackendId) {
-    setBackend(id)
-    window.location.reload()
-  }
-
+  /** 清除自建库配置 → 生效后端自动回到云端公开库 */
   function forget() {
     clearCustom()
-    setBase('')
-    setKey('')
     window.location.reload()
   }
 
   return (
     <div className="rounded-xl border border-line bg-white p-5">
+      <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 REST 地址</label>
+      <input
+        value={base}
+        onChange={(e) => setBase(e.target.value)}
+        placeholder="https://你的反代域名/rest/v1"
+        className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand"
+      />
+
+      <label className="block text-xs font-medium text-ink-2 mt-4 mb-1.5">自建库 anon key</label>
+      <div className="relative">
+        <input
+          type={showKey ? 'text' : 'password'}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+          className="w-full rounded-lg border border-line px-3 py-2 pr-9 text-sm font-mono outline-none focus:border-brand"
+        />
+        <button
+          type="button"
+          onClick={() => setShowKey((v) => !v)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center text-ink-3 hover:text-ink-2"
+          aria-label={showKey ? '隐藏 anon key' : '显示 anon key'}
+        >
+          <Icon name={showKey ? 'eye-off' : 'eye'} className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 mt-4">
+        <button
+          type="button"
+          onClick={saveCustom}
+          className="px-3.5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:opacity-90"
+        >
+          {saved ? '已保存' : '保存'}
+        </button>
+        <button
+          type="button"
+          onClick={forget}
+          className="px-3.5 py-2 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas"
+        >
+          清除并回到云端
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 日历订阅卡 —— 跟随当前登录的数据源（云端 → CF Function；自建库 → NAS RPC）。
+ * 生成一枚订阅密钥（明文只存本机），拼出 .ics 订阅 URL，添加到各平台日历 App
+ * 即可收到案件节点到期提醒与提前提醒。源已在登录页选定，这里不再单独切云端/NAS。
+ */
+function CalendarCard() {
+  const backend = currentBackend() // 'cloud' | 'nas'：跟随登录源
+  const [token, setToken] = useState<string | null>(null)
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [copied, setCopied] = useState(false)
+  const srcName = backend === 'nas' ? '自建库（国内）' : '云端公开库'
+  // 自建库订阅地址来自构建变量 VITE_NAS_CAL_BASE；未配置时禁用生成并给出提示
+  const ready = subscriptionConfigured(backend)
+  // 底端一行使用提示：说明这条订阅读的到底是哪一侧的数据
+  const srcHint =
+    backend === 'nas'
+      ? '数据来源：本订阅直接读取自建库（NAS）里的案件节点，与云端无关。'
+      : '数据来源：本订阅读取云端公开库；云端与自建库双向同步后，内容与 NAS 端一致。'
+
+  useEffect(() => {
+    try {
+      const existing = localStorage.getItem(`lw.ical.key.v1.${backend}`)
+      if (existing) {
+        setToken(existing)
+        setUrl(subscriptionConfigured(backend) ? subscriptionUrl(existing, backend) : '')
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [backend])
+
+  async function generateOrRefresh() {
+    setBusy(true)
+    setErr('')
+    const t = await ensureToken(backend)
+    setBusy(false)
+    if (!t) {
+      setErr('生成订阅密钥失败，请检查网络或登录状态后重试')
+      return
+    }
+    setToken(t)
+    setUrl(subscriptionConfigured(backend) ? subscriptionUrl(t, backend) : '')
+  }
+
+  function copy() {
+    if (!url) return
+    navigator.clipboard
+      ?.writeText(url)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => setErr('复制失败，请手动长按 URL 复制'))
+  }
+
+  async function revoke() {
+    if (!token) return
+    setBusy(true)
+    setErr('')
+    try {
+      await revokeToken(token, backend)
+    } catch {
+      /* 吊销失败也本地清掉，避免卡死 */
+    }
+    clearLocalToken(backend)
+    setBusy(false)
+    setToken(null)
+    setUrl('')
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-white p-5">
       <div className="flex items-center gap-2 mb-1">
-        <Icon name="cloud" className="w-4 h-4 text-ink-2" />
-        <div className="text-sm font-semibold text-ink">数据存放位置</div>
+        <Icon name="calendar" className="w-4 h-4 text-ink-2" />
+        <div className="text-sm font-semibold text-ink">日历订阅</div>
         <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-brand/10 text-brand">
-          当前：{backend === 'custom' ? '自建库' : '云端公开库'}
+          来源：{srcName}
         </span>
       </div>
       <p className="text-xs text-ink-3 leading-relaxed mb-4">
-        默认使用云端公开库（每个律师只能看到自己的数据）。如需改用你自行搭建的自建库，请在下方填写它的地址与密钥——
-        这两项<strong className="text-ink-2">只保存在你本机浏览器</strong>，不会写入应用、也不会上传。
+        生成一枚专属订阅链接，添加到手机/电脑的日历 App，即可在案件节点到期前收到提醒
+        （未设置「到期提醒」的案件会在节点时间准时提醒）。订阅链接含密钥，请勿外泄；吊销后旧链接立即失效。
       </p>
 
-      <div className="space-y-2 mb-4">
+      {!ready ? (
+        <p className="text-xs text-ink-3 mb-3">
+          未配置自建库日历地址（构建变量 <span className="font-mono">VITE_NAS_CAL_BASE</span>
+          ），本模式下暂不能生成订阅链接。云端公开库不受影响。
+        </p>
+      ) : url ? (
+        <div className="rounded-lg border border-line bg-canvas px-3 py-2.5 mb-3">
+          <div className="text-2xs text-ink-3 mb-1">订阅 URL（添加到日历 App）</div>
+          <div className="text-2xs font-mono text-ink-2 break-all select-all">{url}</div>
+        </div>
+      ) : (
+        <p className="text-xs text-ink-3 mb-3">尚未生成订阅链接。</p>
+      )}
+
+      <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => switchTo('cloud')}
-          className={`w-full text-left rounded-lg border px-3.5 py-3 transition-colors ${
-            backend === 'cloud' ? 'border-brand bg-brand/5' : 'border-line hover:bg-canvas'
-          }`}
+          onClick={generateOrRefresh}
+          disabled={busy || !ready}
+          className="px-3.5 h-9 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-60 text-white text-sm font-medium transition-colors"
         >
-          <div className="text-sm font-medium text-ink">云端公开库</div>
-          <div className="text-xs text-ink-3 mt-0.5">多租户，按账号行级隔离（推荐，默认）</div>
+          {busy ? '处理中…' : url ? '重新生成' : '生成订阅 URL'}
         </button>
-        <button
-          type="button"
-          disabled={!configured}
-          onClick={() => switchTo('custom')}
-          className={`w-full text-left rounded-lg border px-3.5 py-3 transition-colors disabled:opacity-50 ${
-            backend === 'custom' ? 'border-brand bg-brand/5' : 'border-line hover:bg-canvas'
-          }`}
-        >
-          <div className="text-sm font-medium text-ink">自建库（自行搭建）</div>
-          <div className="text-xs text-ink-3 mt-0.5">
-            {configured ? '已填写，可切换到此库' : '需先在下方填写地址与密钥'}
-          </div>
-        </button>
+        {url && (
+          <>
+            <button
+              type="button"
+              onClick={copy}
+              className="px-3.5 h-9 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas transition-colors"
+            >
+              {copied ? '已复制' : '复制 URL'}
+            </button>
+            <button
+              type="button"
+              onClick={revoke}
+              disabled={busy}
+              className="px-3.5 h-9 rounded-lg border border-line text-sm text-danger hover:bg-[#FEF2F2] transition-colors"
+            >
+              吊销
+            </button>
+          </>
+        )}
       </div>
 
-      <div className="space-y-3 border-t border-line pt-4">
-        <div>
-          <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 REST 地址</label>
-          <input
-            value={base}
-            onChange={(e) => setBase(e.target.value)}
-            placeholder="https://你的反代域名/rest/v1"
-            className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 anon key</label>
-          <input
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-            className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={saveCustom}
-            className="px-3.5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:opacity-90"
-          >
-            {saved ? '已保存' : '保存'}
-          </button>
-          <button
-            type="button"
-            onClick={forget}
-            className="px-3.5 py-2 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas"
-          >
-            清除并回到云端
-          </button>
-        </div>
+      {err && <div className="mt-3 px-3 py-2 rounded-lg bg-danger/6 border border-danger/20 text-xs text-danger">{err}</div>}
+
+      <div className="mt-4 border-t border-line pt-3 space-y-1.5">
+        <div className="text-2xs font-medium text-ink-2">各平台添加方式</div>
+        <ul className="text-2xs text-ink-3 leading-relaxed list-disc pl-4 space-y-1">
+          <li><span className="text-ink-2">iOS / iPhone：</span>设置 → 日历 → 添加账户 → 其他 → 添加订阅日历，粘贴上面的 URL。</li>
+          <li><span className="text-ink-2">安卓：</span>打开 Google 日历 → 设置 → 添加日历 → 通过 URL → 粘贴上面的 URL。</li>
+          <li><span className="text-ink-2">Outlook：</span>左侧「我的日历」旁 + → 添加互联网日历（通过 Web 链接）→ 粘贴上面的 URL。</li>
+        </ul>
       </div>
+
+      <p className="mt-3 text-2xs text-ink-3 leading-relaxed">{srcHint}</p>
     </div>
   )
 }
 
 export function Settings() {
   const { email } = useAuth()
+  const onNas = activeBackend() === 'custom'
   const [pw, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
   const [show, setShow] = useState(false)
@@ -441,15 +546,26 @@ export function Settings() {
           入口只在 role=nas 时显示，而 role=nas 又要先填了自建库才成立。
           判定见 isNasRole()：服务端打了 nas 角色，或本人填了自己的自建库（填了即算）。
         */}
-        {isCloud && (
+        {/* 自建库模式专属：自建库配置 + 云端↔NAS 同步（云端模式不显示） */}
+        {isCloud && onNas && (
           <Section
             icon="cloud"
-            title="数据源"
-            desc="默认使用云端公开库。如需改用自己搭建的自建库，在下方填写其地址与密钥即可——二者只保存在本机浏览器。"
+            title="自建库配置"
+            desc="你正在使用自建库（国内）作为数据源。这里可修改 / 清除它的地址与密钥（只保存在本机浏览器）。要切换数据源，请退出登录后在登录页选择。"
           >
             <BackendCard />
-            {/* 同步需要两端都有库，未填自建库时不必展示 */}
-            {customConfigured() && <DataSync />}
+            <DataSync />
+          </Section>
+        )}
+
+        {/* 日历订阅（需登录：云端/自建库均按后端隔离） */}
+        {isCloud && (
+          <Section
+            icon="calendar"
+            title="日历订阅"
+            desc="生成专属订阅链接，添加到各平台日历 App，即可收到案件节点到期提醒。订阅来源跟随你登录的数据源。"
+          >
+            <CalendarCard />
           </Section>
         )}
 

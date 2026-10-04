@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Icon } from './Icon'
 import { runSync, type SyncReport, type TableSyncStat } from '../lib/syncOps'
 import { readCustom, normalizeRestBase } from '../lib/apiConfig'
-import { cloudAccountUid } from '../lib/auth'
+import { clearCloudBinding, cloudAccountEmail, cloudAccountUid, signInToCloud, useAuth } from '../lib/auth'
 
 /**
  * 云端公开库 ↔ 自建库 的双向增量同步（仅 role=nas 的账号可见）。
@@ -35,7 +35,40 @@ export function DataSync() {
   const [report, setReport] = useState<SyncReport | null>(null)
   const [err, setErr] = useState('')
 
+  // 一次性绑定云端账号：同步需用云端 uid 标记归属（绑定后本机永久记住）
+  const [hasCloudUid, setHasCloudUid] = useState(() => Boolean(cloudAccountUid()))
+  const [bindEmail, setBindEmail] = useState('')
+  const [bindPw, setBindPw] = useState('')
+  const [bindErr, setBindErr] = useState('')
+  const [bindBusy, setBindBusy] = useState(false)
+
   const bothConfigured = Boolean(cloudBase.trim() && nasBase.trim())
+
+  const bindCloud = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!bindEmail.trim() || !bindPw) {
+      setBindErr('请填写云端账号邮箱和密码')
+      return
+    }
+    setBindBusy(true)
+    setBindErr('')
+    const r = await signInToCloud(bindEmail.trim(), bindPw)
+    setBindBusy(false)
+    if (!r.ok) {
+      setBindErr(r.error || '登录云端失败')
+      return
+    }
+    setHasCloudUid(true)
+    setBindErr('')
+  }
+
+  /** 更换绑定的云端账号：清掉已记住的云端 uid / 会话，回到绑定表单 */
+  const rebindCloud = () => {
+    clearCloudBinding()
+    setHasCloudUid(false)
+    setBindErr('')
+    setBindPw('')
+  }
 
   const start = async () => {
     setErr('')
@@ -51,7 +84,7 @@ export function DataSync() {
     // 否则写进云端的行主人是 NAS uid，切回云端登录后 RLS 按 auth.uid() 过滤会整批看不见。
     const cloudUid = cloudAccountUid()
     if (!cloudUid) {
-      setErr('请先「切换数据源到云端」并登录你的云端账号，再回来执行同步——同步需要用你的云端 uid 标记归属。')
+      setErr('请先在上方「绑定你的云端账号」——同步需要用云端 uid 标记归属。')
       return
     }
     setRunning(true)
@@ -82,6 +115,9 @@ export function DataSync() {
 
   const rows = report?.stats ?? log
 
+  const { email: nasEmail } = useAuth()
+  const cloudEmail = cloudAccountEmail()
+
   return (
     <div className="mt-4 rounded-xl border border-line bg-white p-5">
       <div className="flex items-center gap-2 mb-1">
@@ -89,66 +125,129 @@ export function DataSync() {
         <div className="text-sm font-semibold text-ink">双向同步（云端 ↔ NAS）</div>
       </div>
       <p className="text-xs text-ink-3 mb-4 leading-relaxed">
-        按主键逐表比对，缺哪边补哪边，两边都有则以<strong className="text-ink-2">更新时间较新</strong>的为准；
-        判断不了的行记为「冲突」，<strong className="text-ink-2">两边都不动</strong>。
+        按主键逐表比对，两边都有以<strong className="text-ink-2">较新</strong>的为准；判不出的记为「冲突」、两边不动。
         <br />
-        网关那道 apikey 已自动用内置的公开 anon key，<strong className="text-ink-2">你只需填 service_role token</strong>。
-        token 仅存于当前页面，刷新即清空。
+        你只需填两边的 <strong className="text-ink-2">service_role token</strong>（apikey 已内置，token 仅存本页）。
       </p>
 
-      {/* 云端 */}
-      <div className="space-y-2">
-        <div>
-          <div className="text-xs font-medium text-ink-2 mb-1.5">云端 Supabase</div>
+      {/* 一次性绑定云端账号：同步需用云端 uid 标记归属，绑定后本机永久记住 */}
+      {!hasCloudUid && (
+        <form onSubmit={bindCloud} className="mb-4 rounded-lg border border-brand/30 bg-brand/5 p-4">
+          <div className="text-xs font-medium text-ink-2 mb-1">先绑定你的云端账号（一次性）</div>
+          <p className="text-2xs text-ink-3 leading-relaxed mb-3">
+            写入云端时要用你<strong className="text-ink-2">云端账号的 uid</strong> 标记归属，
+            否则切回云端后 RLS 会过滤掉这些行。登录一次即绑定，本机永久记住。
+          </p>
           <input
-            value={cloudBase}
-            onChange={(e) => setCloudBase(e.target.value)}
-            placeholder="https://xxx.supabase.co/rest/v1"
-            className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-xs text-ink outline-none focus:bg-white focus:border-brand"
+            type="email"
+            autoComplete="username"
+            value={bindEmail}
+            onChange={(e) => setBindEmail(e.target.value)}
+            placeholder="云端账号邮箱"
+            className="w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand mb-1.5"
           />
           <input
-            type={showTokens ? 'text' : 'password'}
-            value={cloudToken}
-            onChange={(e) => setCloudToken(e.target.value)}
-            placeholder="service_role token（NAS 取 .env 的 SERVICE_ROLE_KEY）"
-            autoComplete="off"
-            className="mt-1.5 w-full h-9 px-3 rounded-lg border border-line bg-canvas text-xs text-ink outline-none focus:bg-white focus:border-brand font-mono"
+            type="password"
+            autoComplete="current-password"
+            value={bindPw}
+            onChange={(e) => setBindPw(e.target.value)}
+            placeholder="云端账号密码"
+            className="w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand"
           />
-        </div>
+          {bindErr && (
+            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-danger/6 border border-danger/20 text-2xs text-danger">
+              {bindErr}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={bindBusy}
+            className="mt-3 px-3.5 h-9 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-60 text-white text-xs font-medium transition-colors"
+          >
+            {bindBusy ? '正在绑定…' : '绑定云端账号并继续'}
+          </button>
+        </form>
+      )}
 
-        {/* NAS */}
-        <div>
-          <div className="text-xs font-medium text-ink-2 mb-1.5">NAS 自建库</div>
-          <input
-            value={nasBase}
-            onChange={(e) => setNasBase(e.target.value)}
-            placeholder="https://你的反代域名/rest/v1"
-            className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-xs text-ink outline-none focus:bg-white focus:border-brand"
-          />
-          <input
-            type={showTokens ? 'text' : 'password'}
-            value={nasToken}
-            onChange={(e) => setNasToken(e.target.value)}
-            placeholder="service_role token（NAS 取 .env 的 SERVICE_ROLE_KEY）"
-            autoComplete="off"
-            className="mt-1.5 w-full h-9 px-3 rounded-lg border border-line bg-canvas text-xs text-ink outline-none focus:bg-white focus:border-brand font-mono"
-          />
+      {/* 云端侧 */}
+      <div className="rounded-lg border border-line bg-canvas/50 p-3.5 mb-2.5">
+        <div className="flex items-center gap-2 mb-2.5">
+          <Icon name="cloud" className="w-3.5 h-3.5 text-ink-3 shrink-0" />
+          <span className="text-xs font-semibold text-ink-2 shrink-0">云端 Supabase</span>
+          {hasCloudUid ? (
+            <>
+              <span className="flex items-center gap-1 text-2xs text-ink-3 min-w-0" title={cloudEmail || ''}>
+                <Icon name="user" className="w-3 h-3 shrink-0" />
+                <span className="truncate">{cloudEmail || '已绑定'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={rebindCloud}
+                title="改为绑定另一个云端账号"
+                className="ml-auto shrink-0 text-2xs text-brand hover:underline transition-colors"
+              >
+                更换账号
+              </button>
+            </>
+          ) : (
+            <span className="text-2xs text-warn">未绑定账号</span>
+          )}
         </div>
-
-        <label className="flex items-center gap-2 text-2xs text-ink-3 select-none">
-          <input
-            type="checkbox"
-            checked={showTokens}
-            onChange={(e) => setShowTokens(e.target.checked)}
-            className="w-3.5 h-3.5 accent-[#1D4ED8]"
-          />
-          显示 token
-        </label>
+        <input
+          value={cloudBase}
+          onChange={(e) => setCloudBase(e.target.value)}
+          placeholder="https://xxx.supabase.co/rest/v1"
+          className="w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand"
+        />
+        <input
+          type={showTokens ? 'text' : 'password'}
+          value={cloudToken}
+          onChange={(e) => setCloudToken(e.target.value)}
+          placeholder="service_role token（Supabase 控制台 → Project settings → API）"
+          autoComplete="off"
+          className="mt-1.5 w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand font-mono"
+        />
       </div>
+
+      {/* NAS 侧 */}
+      <div className="rounded-lg border border-line bg-canvas/50 p-3.5">
+        <div className="flex items-center gap-2 mb-2.5">
+          <Icon name="device" className="w-3.5 h-3.5 text-ink-3 shrink-0" />
+          <span className="text-xs font-semibold text-ink-2 shrink-0">NAS 自建库</span>
+          <span className="flex items-center gap-1 text-2xs text-ink-3 min-w-0" title={nasEmail}>
+            <Icon name="user" className="w-3 h-3 shrink-0" />
+            <span className="truncate">{nasEmail || '当前登录账号'}</span>
+          </span>
+        </div>
+        <input
+          value={nasBase}
+          onChange={(e) => setNasBase(e.target.value)}
+          placeholder="https://你的反代域名/rest/v1"
+          className="w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand"
+        />
+        <input
+          type={showTokens ? 'text' : 'password'}
+          value={nasToken}
+          onChange={(e) => setNasToken(e.target.value)}
+          placeholder="service_role token（NAS 的 .env 里 SERVICE_ROLE_KEY）"
+          autoComplete="off"
+          className="mt-1.5 w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand font-mono"
+        />
+      </div>
+
+      <label className="flex items-center gap-2 mt-3 text-2xs text-ink-3 select-none">
+        <input
+          type="checkbox"
+          checked={showTokens}
+          onChange={(e) => setShowTokens(e.target.checked)}
+          className="w-3.5 h-3.5 accent-[#1D4ED8]"
+        />
+        显示 token
+      </label>
 
       {!bothConfigured && (
         <div className="mt-3 rounded-lg bg-[#FFFAEB] border border-[#FEDF89] px-3 py-2 text-2xs text-warn leading-relaxed">
-          当前构建里没有内置两个后端地址，请在上方手动填写两边接口地址。
+          未内置后端地址，请在上方手动填写两边接口地址。
         </div>
       )}
 
@@ -334,9 +433,9 @@ export function DataSync() {
       <div className="mt-4 flex items-start gap-2 px-1">
         <Icon name="shield" className="w-3.5 h-3.5 text-ink-3 mt-0.5 shrink-0" />
         <p className="text-[11px] text-ink-3 leading-relaxed">
-          NAS 用 <span className="font-mono">/supabase-selfhosted/.env</span> 的{' '}
-          <span className="font-mono">service_role_key</span>；云端 token 在 Supabase 控制台{' '}
-          <span className="font-mono">Project Settings → API</span> 取 <span className="font-mono">service_role</span>
+          NAS token 取 <span className="font-mono">.env</span> 的{' '}
+          <span className="font-mono">SERVICE_ROLE_KEY</span>；云端在 Supabase 控制台{' '}
+          <span className="font-mono">Project Settings → API</span> 取
         </p>
       </div>
     </div>

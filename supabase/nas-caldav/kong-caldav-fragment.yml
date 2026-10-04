@@ -1,0 +1,15 @@
+
+  - name: caldav
+    url: http://caldav:5232/
+    routes:
+      - name: caldav-all
+        strip_path: true
+        paths:
+          - /dav
+    plugins:
+      # Radicale 挂在子路径下必须靠 X-Script-Name 告知前缀，否则它生成的 href 会丢 /dav
+      - name: request-transformer
+        config:
+          append:
+            headers:
+              - "X-Script-Name:/dav"

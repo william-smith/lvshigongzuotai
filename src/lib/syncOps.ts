@@ -196,16 +196,31 @@ function cleanBase(base: string): string {
   return base.trim().replace(/\/+$/, '')
 }
 
+/** 单页行数：Supabase 云端 PostgREST 默认 db-max-rows=1000，超页会被**静默截断**
+ *  （典型症状：双向同步每一轮都「补」同一批行——云端永远"缺"被截掉的那些）。
+ *  所以读取必须带 Range 翻页取全；order=id 保证分页稳定（各同步表主键都是 id）。 */
+const FETCH_PAGE = 1000
+
 async function fetchAll(ep: SyncEndpoint, table: SyncTable): Promise<Row[]> {
   // 多租户库 + 根表 → 只取归属本人的行
   const scope = ep.scopeUid && SCOPED_TABLES.has(table) ? `&user_id=eq.${ep.scopeUid}` : ''
-  const res = await fetch(`${cleanBase(ep.base)}/${table}?select=*${scope}`, { headers: headers(ep) })
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    const hint = res.status === 401 ? '（token 无效或已过期，请重新生成）' : ''
-    throw new Error(`读取失败 ${res.status}${hint} ${t.slice(0, 800)}`)
+  const out: Row[] = []
+  let from = 0
+  for (;;) {
+    const res = await fetch(`${cleanBase(ep.base)}/${table}?select=*${scope}&order=id.asc`, {
+      headers: { ...headers(ep), Range: `${from}-${from + FETCH_PAGE - 1}` },
+    })
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      const hint = res.status === 401 ? '（token 无效或已过期，请重新生成）' : ''
+      throw new Error(`读取失败 ${res.status}${hint} ${t.slice(0, 800)}`)
+    }
+    const batch = (await res.json()) as Row[]
+    out.push(...batch)
+    if (batch.length < FETCH_PAGE) break // 不足一页 = 已到末尾
+    from += FETCH_PAGE
   }
-  return (await res.json()) as Row[]
+  return out
 }
 
 async function upsert(ep: SyncEndpoint, table: SyncTable, rows: Row[]): Promise<void> {
@@ -263,12 +278,18 @@ async function fetchTombs(ep: SyncEndpoint): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   try {
     const scope = ep.scopeUid ? `&user_id=eq.${ep.scopeUid}` : ''
-    const res = await fetch(`${cleanBase(ep.base)}/${TOMB_TABLE}?select=tbl,row_id,deleted_at${scope}`, {
-      headers: headers(ep),
-    })
-    if (!res.ok) return out
-    const rows = (await res.json()) as Array<{ tbl: string; row_id: string; deleted_at: string }>
-    for (const r of rows) out.set(tombKey(r.tbl, r.row_id), String(r.deleted_at ?? ''))
+    let from = 0
+    for (;;) {
+      const res = await fetch(
+        `${cleanBase(ep.base)}/${TOMB_TABLE}?select=tbl,row_id,deleted_at${scope}&order=id.asc`,
+        { headers: { ...headers(ep), Range: `${from}-${from + FETCH_PAGE - 1}` } },
+      )
+      if (!res.ok) return out
+      const rows = (await res.json()) as Array<{ tbl: string; row_id: string; deleted_at: string }>
+      for (const r of rows) out.set(tombKey(r.tbl, r.row_id), String(r.deleted_at ?? ''))
+      if (rows.length < FETCH_PAGE) break
+      from += FETCH_PAGE
+    }
   } catch {
     // 表不存在或读不到 → 按「无墓碑」处理
   }

@@ -1,0 +1,84 @@
+# NAS 端日历订阅桥接服务
+#
+# 作用：把 PostgREST 的 /rpc/calendar_ics（只能吐 application/json、
+#       对 Accept: text/calendar 返 406）转成日历 App 可直接订阅的
+#       GET /calendar.ics?key=xxx -> text/calendar。
+#
+# 用法：
+#   mkdir -p /vol1/1000/docker/calendar-svc
+#   把本目录三个文件放进去，然后写 .env（不要提交到 git）：
+#     printf 'CAL_SERVICE_ROLE_KEY=< Supabase 的 SERVICE_ROLE_KEY >\n' > .env
+#     chmod 600 .env
+#   docker compose up -d
+#
+# 注意：
+#   - 端口只绑 127.0.0.1，局域网/公网扫不到；对外靠 Lucky 新增一条
+#     /calendar.ics -> http://127.0.0.1:8899 的子路径规则。
+#   - supabase 网络是 supabase-selfhosted 项目自动创建的，这里以 external 引用。
+
+services:
+  cal-ics:
+    image: python:3.12-alpine
+    container_name: cal-ics
+    restart: unless-stopped
+
+    env_file:
+      - .env
+    environment:
+      HOME: /tmp
+      # 容器默认 UTC，日志会比北京时间晚 8 小时
+      TZ: Asia/Shanghai
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "8899"
+      UPSTREAM_TIMEOUT: "8"
+      # supabase 网络内容器名直连 Kong
+      UPSTREAM: http://supabase-selfhosted-kong-1:8000/rest/v1/rpc/calendar_ics
+      # 兜底：万一 musl 解析不了容器名，走 Kong 在网内的 IP（变了就改这里）
+      UPSTREAM_FALLBACK: http://172.19.0.5:8000/rest/v1/rpc/calendar_ics
+
+    volumes:
+      - ./cal_serve.py:/app/cal_serve.py:ro
+      # 与宿主机（fnOS）保持一致时区，避免日志/日历时间差 8 小时
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    command: ["python3", "-u", "/app/cal_serve.py"]
+
+    ports:
+      - "127.0.0.1:8899:8899"
+
+    networks:
+      - supabase
+
+    # 最小权限：只读根、无 capabilities、nobody 运行
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8899/healthz',timeout=3).read()",
+        ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  supabase:
+    external: true
+    name: supabase-selfhosted_default

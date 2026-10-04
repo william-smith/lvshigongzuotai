@@ -11,6 +11,8 @@ export interface CaseRow {
   stage_norm?: string | null
   next_action?: string | null
   next_due?: string | null
+  /** 到期提醒规则：ISO8601 duration 字符串数组（如 ["PT1H","P1D","PT90M"]），空=不提醒 */
+  remind_rules?: string[] | null
   first_contact?: string | null
   signed_at?: string | null
   detail_mask?: string | null

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { customConfigured, resolveApi } from './apiConfig'
+import { apiFor, customConfigured, resolveApi, type BackendId } from './apiConfig'
 
 /**
  * 登录：走 Supabase Auth 的标准 REST（GoTrue），同样不绑定 SDK。
@@ -143,6 +143,14 @@ export function currentUserId(): string | null {
  * 云端会话即便已过期也无妨——只取 uid 字符串，同步本身用 service_role 鉴权，不依赖它。
  */
 export function cloudAccountUid(): string | null {
+  // 优先用「记住的云端 uid」：登录云端时记下，之后即使云端会话过期 / 被登出也仍能用于同步标记归属，
+  // 避免「明明在云端登录过、同步却因会话被清而报 uid 缺失」。
+  try {
+    const cached = localStorage.getItem(CLOUD_UID_KEY)
+    if (cached) return cached
+  } catch {
+    /* ignore */
+  }
   try {
     const raw = localStorage.getItem('lw.auth.v1.cloud')
     if (!raw) return null
@@ -150,7 +158,99 @@ export function cloudAccountUid(): string | null {
     if (!s?.access_token) return null
     const p = decodeJwtPayload(s.access_token)
     const sub = p?.sub
-    return typeof sub === 'string' && sub ? sub : null
+    if (typeof sub === 'string' && sub) {
+      try {
+        localStorage.setItem(CLOUD_UID_KEY, sub)
+        if (s.email) localStorage.setItem(CLOUD_EMAIL_KEY, s.email)
+      } catch {
+        /* ignore */
+      }
+      return sub
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+const CLOUD_UID_KEY = 'lw.cloud.uid.v1'
+const CLOUD_EMAIL_KEY = 'lw.cloud.email.v1'
+
+/** 云端公开库的认证配置（与当前生效后端无关，固定指向云端） */
+function cloudAuth(): { authBase: string; key: string } {
+  const { base, key } = apiFor('cloud')
+  const authBase = base ? base.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : ''
+  return { authBase, key }
+}
+
+/**
+ * 登录云端账号（与当前生效后端无关）—— 供「同步前一次性绑定云端 uid」用，
+ * 避免用户为了同步还得退出到登录页切数据源、来回折腾。
+ * 成功后：云端会话写入固定的 `lw.auth.v1.cloud`，uid 记入 `lw.cloud.uid.v1`
+ * （后者独立于会话，云端会话过期 / 登出后同步仍可用）。
+ */
+export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  const { authBase, key } = cloudAuth()
+  if (!authBase || !key) return { ok: false, error: '未配置云端公开库地址' }
+  try {
+    const res = await timedFetch(`${authBase}/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    const b = (await res.json().catch(() => ({}))) as TokenResp
+    if (!res.ok || !b.access_token) return { ok: false, error: pickError(b, res.status) }
+    const s: Session = {
+      access_token: b.access_token,
+      refresh_token: b.refresh_token ?? '',
+      expires_at: Date.now() + (b.expires_in ?? 3600) * 1000,
+      email: b.user?.email || email,
+    }
+    try {
+      localStorage.setItem('lw.auth.v1.cloud', JSON.stringify(s))
+    } catch {
+      /* ignore */
+    }
+    const uid = decodeJwtPayload(b.access_token)?.sub
+    try {
+      if (typeof uid === 'string' && uid) localStorage.setItem(CLOUD_UID_KEY, uid)
+      localStorage.setItem(CLOUD_EMAIL_KEY, s.email)
+    } catch {
+      /* ignore */
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: netError(e).message }
+  }
+}
+
+/**
+ * 解除云端绑定：清掉记住的云端 uid 与云端会话——用于同步卡里「更换云端账号」重新绑定到另一个云端账号。
+ * 若当前处于自建库模式，不影响 NAS 会话（只清云端那一份）。
+ */
+export function clearCloudBinding(): void {
+  try {
+    localStorage.removeItem(CLOUD_UID_KEY)
+    localStorage.removeItem(CLOUD_EMAIL_KEY)
+    localStorage.removeItem('lw.auth.v1.cloud')
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 已记住的云端账号邮箱（仅用于界面展示「同步绑定的是哪个云端账号」；绑定期/换绑后随 uid 一起更新）。 */
+export function cloudAccountEmail(): string | null {
+  try {
+    const cached = localStorage.getItem(CLOUD_EMAIL_KEY)
+    if (cached) return cached
+  } catch {
+    /* ignore */
+  }
+  try {
+    const raw = localStorage.getItem('lw.auth.v1.cloud')
+    if (!raw) return null
+    const s2 = parse(raw)
+    return s2?.email || null
   } catch {
     return null
   }
@@ -164,6 +264,30 @@ function parse(raw: string | null): Session | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 取指定后端的当前会话 access_token（日历订阅显式选「云端 / 自建库」时，
+ * 往该后端写 ical_tokens 要用它对应的 JWT，不能用当前生效后端那枚）。
+ * 键名规则与 sessionTag() 一致：cloud → `lw.auth.v1.cloud`；
+ * 自建库 → `lw.auth.v1.nas-<hostHash>`（hostHash 取 REST 基址 host 的非字母数字字符替换为 _）。
+ * 未登录该后端返回 null（调用方据此提示「请先登录到该后端」）。
+ */
+export function sessionTokenFor(backend: BackendId): string | null {
+  let key: string
+  if (backend === 'cloud') {
+    key = 'lw.auth.v1.cloud'
+  } else {
+    const base = apiFor('custom').base
+    let host = ''
+    try {
+      host = new URL(base || '').host
+    } catch {
+      /* ignore */
+    }
+    key = `lw.auth.v1.nas-${host.replace(/[^a-z0-9]/gi, '_')}`
+  }
+  return parse(localStorage.getItem(key) ?? null)?.access_token ?? null
 }
 
 /** 勾「记住我」→ localStorage（长期）；否则 → sessionStorage（关掉标签页即失效） */

@@ -5,6 +5,7 @@ import { deleteCase, saveCase, type CaseDraft } from '../lib/caseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
 import { useSwipeBack } from '../lib/gestures'
 import { defaultAt, toDateTimeLocal, type CaseRow } from '../lib/types'
+import { CalendarRemindField } from '../components/CalendarRemindField'
 
 type Mode = 'create' | 'edit'
 
@@ -24,6 +25,7 @@ interface FormState {
   stage: string
   next_action: string
   next_due: string
+  remind_rules: string[]
   first_contact: string
   signed_at: string
   detail: string
@@ -35,6 +37,7 @@ const emptyForm: FormState = {
   stage: '一审',
   next_action: '',
   next_due: defaultAt(),
+  remind_rules: [],
   first_contact: '',
   signed_at: '',
   detail: '',
@@ -48,6 +51,7 @@ function toForm(c: CaseRow | null): FormState {
     stage: c.stage ?? '一审',
     next_action: c.next_action ?? '',
     next_due: toDateTimeLocal(c.next_due),
+    remind_rules: c.remind_rules ?? [],
     first_contact: c.first_contact ?? '',
     signed_at: c.signed_at ?? '',
     // 先放脱敏文本；解锁后会用密文解出的原文替换
@@ -160,6 +164,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
         stage: form.stage.trim(),
         next_action: form.next_action.trim() || null,
         next_due: form.next_due || null,
+        remind_rules: form.remind_rules,
         first_contact: form.first_contact || null,
         signed_at: form.signed_at || null,
         detail: trimmedDetail || null,
@@ -322,6 +327,17 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
                   />
                 </Field>
               </div>
+
+              {/* 到期提醒规则 */}
+              <Field
+                label="到期提醒"
+                hint="在日历里提前多久提醒"
+              >
+                <CalendarRemindField
+                  value={form.remind_rules}
+                  onChange={(v) => setForm((f) => ({ ...f, remind_rules: v }))}
+                />
+              </Field>
 
               {/* 签单日 + 首次接触 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

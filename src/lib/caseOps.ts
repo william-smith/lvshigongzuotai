@@ -31,6 +31,8 @@ export interface CaseDraft {
   stage?: string | null
   next_action?: string | null
   next_due?: string | null
+  /** 到期提醒规则：ISO8601 duration 数组（如 ["PT1H","P1D"]），空=不提醒 */
+  remind_rules?: string[] | null
   first_contact?: string | null
   signed_at?: string | null
   /** 「详细情况」的当前文本（解锁时为原文，未解锁时为脱敏文本） */
@@ -83,6 +85,7 @@ function buildRow(
     stage_norm: normalizeStage(stage),
     next_action: draft.next_action ?? null,
     next_due: draft.next_due ?? null,
+    remind_rules: draft.remind_rules ?? [],
     first_contact: draft.first_contact ?? null,
     signed_at: draft.signed_at ?? null,
     detail_mask: detail.mask,
@@ -119,6 +122,7 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
         stage_norm: row.stage_norm,
         next_action: row.next_action,
         next_due: row.next_due,
+        remind_rules: row.remind_rules,
         first_contact: row.first_contact,
         signed_at: row.signed_at,
         detail_mask: row.detail_mask,
@@ -145,6 +149,7 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
       stage_norm: row.stage_norm,
       next_action: row.next_action,
       next_due: row.next_due,
+      remind_rules: row.remind_rules,
       first_contact: row.first_contact,
       signed_at: row.signed_at,
       detail_mask: row.detail_mask,

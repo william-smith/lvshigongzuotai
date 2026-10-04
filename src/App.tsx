@@ -3,6 +3,7 @@ import { BottomTabs, MobileBar, Sidebar, VIEW_ORDER, type ViewKey } from './comp
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
 import { Icon } from './components/Icon'
+import { BackendEscape } from './components/BackendEscape'
 import { AuthProvider, authEnabled, useAuth } from './lib/auth'
 import { isCloud, loadDataset } from './lib/data'
 import { clearCachedDataset, getCachedDataset, setCachedDataset } from './lib/datasetCache'
@@ -461,8 +462,14 @@ function Shell() {
 
   if (!ready || !data) {
     return (
-      <div className="h-screen flex items-center justify-center text-ink-3 text-sm bg-canvas">
+      <div className="h-screen flex flex-col items-center justify-center gap-4 px-5 text-ink-3 text-sm bg-canvas">
         {err ? <span className="text-danger">加载失败：{err}</span> : '正在载入案件数据…'}
+        {/* 自建库不可达导致加载失败时，设置页进不去，这里给出「切回云端」的出口 */}
+        {err && (
+          <div className="w-full max-w-[380px]">
+            <BackendEscape />
+          </div>
+        )}
       </div>
     )
   }
