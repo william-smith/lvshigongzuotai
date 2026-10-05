@@ -47,7 +47,7 @@ BEGIN
 
   -- 案件 + 接案合并进同一份日历：
   --   cases  → UID=case-<id>，matter=next_action（下一节点）
-  --   intakes → UID=intake-<id>，matter=固定「接案跟踪」（接案无案由/下一节点字段）
+  --   intakes → UID=intake-<id>，matter=next_action（节点事项，未设回落「接案跟踪」）
   -- 二者都按 next_due 升序合并遍历；接案不设 next_due 则不进日历（不是每个接案都要提醒）
   FOR v_case IN
     SELECT
@@ -64,7 +64,7 @@ BEGIN
       'intake-' || id::text || '@lawyer-workbench' AS uid,
       client,
       NULL::text                                    AS cause,
-      '接案跟踪'::text                               AS matter,
+      COALESCE(NULLIF(trim(next_action), ''), '接案跟踪') AS matter,
       next_due,
       remind_rules
     FROM intakes

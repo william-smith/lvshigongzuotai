@@ -33,11 +33,12 @@ export function CalendarRemindField({
   }
 
   const inputCls =
-    'h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand'
+    'h-9 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand'
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex gap-2 items-center">
+    <div className="space-y-2">
+      {/* 窄屏堆叠、宽屏并排：数值固定窄，单位与按钮均分，避免按钮比例失衡 */}
+      <div className="flex gap-2">
         <input
           type="number"
           min={1}
@@ -51,12 +52,14 @@ export function CalendarRemindField({
             }
           }}
           placeholder="数值"
-          className={inputCls + ' w-24'}
+          aria-label="提醒数值"
+          className={inputCls + ' w-16 shrink-0'}
         />
         <select
           value={unit}
           onChange={(e) => setUnit(e.target.value as DurationUnit)}
-          className={inputCls + ' flex-1'}
+          aria-label="提醒单位"
+          className={inputCls + ' w-20 shrink-0'}
         >
           <option value="minutes">分钟</option>
           <option value="hours">小时</option>
@@ -65,14 +68,14 @@ export function CalendarRemindField({
         <button
           type="button"
           onClick={add}
-          className="h-10 px-4 rounded-lg bg-brand hover:bg-brand-hover text-white text-sm font-medium transition-colors"
+          className="h-9 px-3.5 rounded-lg bg-brand hover:bg-brand-hover text-white text-sm font-medium transition-colors shrink-0"
         >
           添加
         </button>
       </div>
 
       {value.length === 0 ? (
-        <p className="text-2xs text-ink-3">未设置提醒：到期当天不会主动推送（设了也会照常在日历里显示事件）。</p>
+        <p className="text-2xs text-ink-3">未设提醒＝到点当天不主动弹窗（事件仍会出现在日历里）。</p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {value.map((d) => (

@@ -23,6 +23,7 @@ interface FormState {
   first_contact: string
   signed_at: string
   converted: boolean
+  next_action: string
   next_due: string
   remind_rules: string[]
   note: string
@@ -33,6 +34,7 @@ const emptyForm: FormState = {
   first_contact: '',
   signed_at: '',
   converted: false,
+  next_action: '',
   next_due: '',
   remind_rules: [],
   note: '',
@@ -45,6 +47,7 @@ function toForm(c: IntakeRow | null): FormState {
     first_contact: c.first_contact ?? '',
     signed_at: c.signed_at ?? '',
     converted: c.converted ?? false,
+    next_action: c.next_action ?? '',
     next_due: toDateTimeLocal(c.next_due),
     remind_rules: c.remind_rules ?? [],
     note: c.note_mask ?? '',
@@ -153,6 +156,7 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
         first_contact: form.first_contact || null,
         signed_at: form.signed_at || null,
         converted: form.converted,
+        next_action: form.next_action.trim() || null,
         next_due: form.next_due || null,
         remind_rules: form.remind_rules,
         note: trimmedNote || null,
@@ -281,33 +285,49 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
               </div>
 
               {/* 已转案件 */}
-              <Field label="状态">
-                <label className="flex items-center gap-2.5 h-10 px-3 rounded-lg border border-line bg-canvas cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.converted}
-                    onChange={(e) => setForm((f) => ({ ...f, converted: e.target.checked }))}
-                    className="w-4 h-4 accent-brand"
-                  />
-                  <span className="text-sm">已转成案件（{form.converted ? '是' : '否'}）</span>
-                </label>
-              </Field>
-
-              {/* 节点时间（可选）+ 到期提醒（可选，不是每个接案都要设） */}
-              <Field label="节点时间（可选 · 精确到分钟）" hint="设了才进日历提醒">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
                 <input
-                  type="datetime-local"
-                  value={form.next_due}
-                  onChange={set('next_due')}
-                  className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+                  type="checkbox"
+                  checked={form.converted}
+                  onChange={(e) => setForm((f) => ({ ...f, converted: e.target.checked }))}
+                  className="w-4 h-4 accent-brand"
                 />
-              </Field>
-              <Field label="到期提醒" hint="在日历里提前多久提醒">
-                <CalendarRemindField
-                  value={form.remind_rules}
-                  onChange={(v) => setForm((f) => ({ ...f, remind_rules: v }))}
-                />
-              </Field>
+                <span className="text-sm text-ink-2">已转成案件</span>
+              </label>
+
+              {/* 日程提醒：节点事项 + 节点时间 + 到期提醒（三者同属日历，合成一块避免字段散乱） */}
+              <div className="rounded-xl border border-line bg-canvas/40 p-3.5 space-y-3.5">
+                <div className="flex items-center gap-1.5 -mt-0.5">
+                  <Icon name="calendar" className="w-3.5 h-3.5 text-brand" />
+                  <span className="text-xs font-medium text-ink">日程提醒</span>
+                  <span className="text-2xs text-ink-3">设了节点时间即进日历</span>
+                </div>
+
+                <Field label="节点事项" hint="要做什么">
+                  <input
+                    value={form.next_action}
+                    onChange={set('next_action')}
+                    placeholder="例：约时间面谈、发委托合同"
+                    className="w-full h-10 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand"
+                  />
+                </Field>
+
+                <Field label="节点时间" hint="精确到分钟">
+                  <input
+                    type="datetime-local"
+                    value={form.next_due}
+                    onChange={set('next_due')}
+                    className="w-full h-10 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand"
+                  />
+                </Field>
+
+                <Field label="到期提醒" hint="提前多久">
+                  <CalendarRemindField
+                    value={form.remind_rules}
+                    onChange={(v) => setForm((f) => ({ ...f, remind_rules: v }))}
+                  />
+                </Field>
+              </div>
 
               {/* 跟踪记录 */}
               <Field

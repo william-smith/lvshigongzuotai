@@ -9,7 +9,7 @@ interface CalEvent {
   uid: string;
   client: string | null;
   cause: string | null;
-  /** 具体事项：案件=next_action；接案=固定「接案跟踪」 */
+  /** 具体事项：案件/接案都是 next_action（接案未填则回落「接案跟踪」） */
   matter: string | null;
   next_due: string | null;
   remind_rules: string[] | null;
@@ -138,13 +138,14 @@ export const onRequest: PagesFunction = async (context) => {
     // 3) 用 service_role 读该用户「设有节点时间」的接案线索（绕 RLS，已按 user_id 收敛范围）
     const intsRes = await fetch(
       `${supabase}/rest/v1/intakes?user_id=eq.${uid}&next_due=not.is.null` +
-        `&select=id,client,next_due,remind_rules&order=next_due`,
+        `&select=id,client,next_due,next_action,remind_rules&order=next_due`,
       { headers: { apikey: svc, authorization: `Bearer ${svc}` } }
     );
     const intakes = (await intsRes.json()) as Array<{
       id: number;
       client: string | null;
       next_due: string | null;
+      next_action: string | null;
       remind_rules: string[] | null;
     }>;
 
@@ -162,7 +163,8 @@ export const onRequest: PagesFunction = async (context) => {
         uid: `intake-${i.id}@lawyer-workbench`,
         client: i.client,
         cause: null,
-        matter: '接案跟踪',
+        // 接案事项 = 用户填的「节点事项」；没填才回落成「接案跟踪」
+        matter: (i.next_action || '').trim() || '接案跟踪',
         next_due: i.next_due,
         remind_rules: i.remind_rules,
       })),

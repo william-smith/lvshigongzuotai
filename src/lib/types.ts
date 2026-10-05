@@ -28,6 +28,8 @@ export interface IntakeRow {
   converted?: boolean
   /** 接案节点时间（精确到分钟）。设了才进日历；不设则不进日历（不是每个接案都要提醒） */
   next_due?: string | null
+  /** 接案节点事项：要做什么（如「约时间面谈」「发委托合同」）。日历标题里显示，空则回落「接案跟踪」 */
+  next_action?: string | null
   /** 接案提醒规则：ISO8601 duration 字符串数组（如 ["PT1H","P1D"]），空=不提醒 */
   remind_rules?: string[] | null
   note_mask?: string | null

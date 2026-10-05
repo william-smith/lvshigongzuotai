@@ -14,6 +14,7 @@ const probes = [
   ['cases.next_due       (基线，应 200)', 'cases?select=id,next_due&limit=1'],
   ['intakes.next_due     (新列，须 200)', 'intakes?select=id,next_due&limit=1'],
   ['intakes.remind_rules (新列，须 200)', 'intakes?select=id,remind_rules&limit=1'],
+  ['intakes.next_action  (新列，须 200)', 'intakes?select=id,next_action&limit=1'],
   ['intakes 整表          (基线，应 200)', 'intakes?select=id&limit=1'],
 ];
 
