@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type TouchEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { BottomTabs, MobileBar, Sidebar, VIEW_ORDER, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
@@ -222,6 +223,25 @@ function Shell() {
   const renderContent = (v: ViewKey, cid: number | null) => {
     if (!data) return null
     const cur = cid != null ? (data.cases.find((c) => c.id === cid) ?? null) : null
+    // 案件详情页按 caseId 渲染；若 caseId 指向的案件不在本地缓存（如刚转出的新案件
+    // 服务端已建、但本地还没拿到该行），cur 会是 null —— 此时不能静默退回列表，
+    // 否则用户看到的是"点了查看却只进了台账"。这里给出明确提示并可返回。
+    if (cid != null && !cur) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="text-sm text-ink-2">未找到该案件（可能已被删除，或本地数据尚未同步）</div>
+          <button
+            onClick={() => {
+              flushSync(() => setTrans(null))
+              setCaseId(null)
+            }}
+            className="h-9 px-4 rounded-lg border border-line text-sm text-ink-2"
+          >
+            返回台账
+          </button>
+        </div>
+      )
+    }
     if (cid != null && cur) {
       return (
         <>
@@ -529,22 +549,25 @@ function Shell() {
           onClose={() => setEditingIntake(undefined)}
           onSaved={onIntakeSaved}
           onDeleted={onIntakeDeleted}
-          onOpenCase={(_caseId, createdCase) => {
-            // 关掉接案编辑页；若拿到了新建的案件行，直接插进本地缓存并打开
+          onOpenCase={(caseId, createdCase) => {
             setEditingIntake(undefined)
             if (createdCase) {
+              // 转案成功：服务端返回的新案件行本地还没有，先插进缓存，
+              // 否则详情页按 caseId 找不到行会渲染成空
               setData((prev) =>
                 prev && !prev.cases.some((c) => c.id === createdCase.id)
                   ? { ...prev, cases: [createdCase, ...prev.cases] }
                   : prev,
               )
-              goto('cases')
-              setCaseId(createdCase.id)
-              setEditing(createdCase)
-            } else {
-              goto('cases')
             }
-          }}
+            // openCase 开头有 `if (trans) return` 守卫：若此刻正有视图切换动画在跑，
+            // 这次导航会被静默吞掉、停在台账列表（用户看到的就是"点了只进列表"）。
+            // setTrans 是异步的，同一事件里 openCase 仍读到旧值，故用 flushSync 立即生效。
+            flushSync(() => setTrans(null))
+            // 用 openCase(id,'cases') 一次完成「切到台账 + 进详情」；
+            // 案件详情页按 caseId != null 渲染，只 goto('cases') 会停在列表
+            // （此前"查看"进不了详情，就是漏了设 caseId 这一步）
+            openCase(caseId, 'cases')          }}
         />
       )}
     </div>
