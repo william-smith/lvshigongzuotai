@@ -193,14 +193,21 @@ export async function deleteIntake(id: number): Promise<void> {
  *   3. 迁联系人：contacts 的 intake_id 改成 case_id，让电话跟着案子走
  *      （contacts 一直有 case_id 列，只是此前都空着）。
  *
- * 幂等：若该接案已带 case_id，直接返回那个案件，不会重复建。
+ * 幂等：若该接案已带 case_id 且该案件仍存在，直接返回那个案件，不会重复建。
+ * 案件被删除后留下的悬空 case_id 视为未转（调用方传 caseExists 校验），允许重新转案。
  */
 export async function convertToCase(
   intake: IntakeRow,
-  opts: { cause?: string | null; stage?: string | null } = {},
+  opts: {
+    cause?: string | null
+    stage?: string | null
+    /** 校验 case_id 指向的案件是否仍存在；不传则沿用旧行为（视为存在） */
+    caseExists?: (id: number) => boolean
+  } = {},
 ): Promise<{ caseId: number; caseRow: CaseRow | null; alreadyConverted: boolean }> {
-  // 已经转过：直接返回既有案件，避免重复建案
-  if (intake.case_id) {
+  // 已经转过：直接返回既有案件，避免重复建案。
+  // 但案件已被删除的悬空引用不算——那样会跳到一条不存在的案件，且永远无法重新转案。
+  if (intake.case_id && (!opts.caseExists || opts.caseExists(intake.case_id))) {
     return { caseId: intake.case_id, caseRow: null, alreadyConverted: true }
   }
   if (!isCloud) {

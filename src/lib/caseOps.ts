@@ -180,4 +180,18 @@ export async function deleteCase(id: number): Promise<void> {
   }
   // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
   void recordTombstone('cases', id)
+
+  // 回清引用了该案件的接案记录（case_id → null、converted → false）。
+  // 不回清的话接案页会永远显示「已转成案件」、却跳到一条已删除的案件（悬空引用）。
+  // 尽力而为：失败不阻断删除主流程，前端对悬空引用也有「案件不存在→按未转」的兜底。
+  try {
+    const clr = await authedFetch(`${BASE}/intakes?case_id=eq.${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ case_id: null, converted: false, updated_at: new Date().toISOString() }),
+    })
+    if (!clr.ok) console.warn('回清接案 case_id 失败：', clr.status)
+  } catch (e) {
+    console.warn('回清接案 case_id 异常：', e)
+  }
 }

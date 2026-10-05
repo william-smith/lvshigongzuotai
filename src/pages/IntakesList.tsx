@@ -133,14 +133,31 @@ export function IntakesList({
     return m
   }, [data.intakes, data.cases])
 
+  // 「已转」的有效口径：case_id 指向的案件必须仍存在（案件删除后的悬空引用按未转处理），
+  // 或老数据仅有 converted 布尔且无 case_id（转案前手动标记）。
+  // 与 IntakeEditor 的 alreadyConverted 判断保持同一口径，避免列表与编辑页显示不一致。
+  const convertedStateById = useMemo(() => {
+    const m = new Map<number, { converted: boolean; caseId: number | null }>()
+    for (const i of data.intakes) {
+      if (!i || i.id == null) continue
+      const alive = i.case_id != null && data.cases.some((c) => c.id === i.case_id)
+      if (alive) m.set(i.id, { converted: true, caseId: i.case_id ?? null })
+      else if (i.converted && i.case_id == null) m.set(i.id, { converted: true, caseId: null })
+      else m.set(i.id, { converted: false, caseId: null })
+    }
+    return m
+  }, [data.intakes, data.cases])
+
   const totalAll = data.intakes.length
-  const totalConverted = data.intakes.filter((i) => i.converted).length
+  const totalConverted = convertedStateById.size
+    ? [...convertedStateById.values()].filter((s) => s.converted).length
+    : 0
   const totalOpen = totalAll - totalConverted
 
   const rows = useMemo(() => {
     let r = data.intakes
-    if (view.filter === 'converted') r = r.filter((i) => i.converted)
-    if (view.filter === 'open') r = r.filter((i) => !i.converted)
+    if (view.filter === 'converted') r = r.filter((i) => convertedStateById.get(i.id)?.converted)
+    if (view.filter === 'open') r = r.filter((i) => !convertedStateById.get(i.id)?.converted)
     if (q.trim()) {
       const k = q.trim()
       r = r.filter(
@@ -152,7 +169,7 @@ export function IntakesList({
     if (view.sortKey === 'default') return r
     const dir = view.sortDir === 'asc' ? 1 : -1
     return [...r].sort((a, b) => cmpIntake(a, b, view.sortKey, dir))
-  }, [data.intakes, view.filter, view.sortKey, view.sortDir, q])
+  }, [data.intakes, convertedStateById, view.filter, view.sortKey, view.sortDir, q])
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE))
   const pageRows = rows.slice((page - 1) * PAGE, page * PAGE)
@@ -348,7 +365,11 @@ export function IntakesList({
                     <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(i.first_contact)}</td>
                     <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(i.signed_at)}</td>
                     <td className="px-3 py-3">
-                      <ConvertedTag converted={i.converted} caseId={i.case_id} onOpenCase={onOpenCase} />
+                      <ConvertedTag
+                        converted={convertedStateById.get(i.id)?.converted}
+                        caseId={convertedStateById.get(i.id)?.caseId ?? null}
+                        onOpenCase={onOpenCase}
+                      />
                     </td>
                     <td className="px-3 py-3 text-ink-2 truncate max-w-[260px]">
                       {i.note_mask || <span className="text-ink-3">—</span>}
@@ -427,7 +448,11 @@ export function IntakesList({
                     <div className="text-sm font-semibold">{i.client || <span className="text-ink-3">—</span>}</div>
                     <div className="text-xs text-ink-2 mt-0.5 truncate">{i.note_mask || '暂无记录'}</div>
                   </div>
-                  <ConvertedTag converted={i.converted} caseId={i.case_id} onOpenCase={onOpenCase} />
+                  <ConvertedTag
+                    converted={convertedStateById.get(i.id)?.converted}
+                    caseId={convertedStateById.get(i.id)?.caseId ?? null}
+                    onOpenCase={onOpenCase}
+                  />
                 </div>
                 <div className="flex items-center gap-2 mt-2.5 text-xs text-ink-3">
                   <Icon name="clock" className="w-3.5 h-3.5" />

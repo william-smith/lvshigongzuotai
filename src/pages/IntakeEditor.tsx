@@ -13,6 +13,8 @@ type Mode = 'create' | 'edit'
 interface Props {
   mode: Mode
   initial: IntakeRow | null
+  /** 当前台账全部案件：用于校验 case_id 指向的案件是否仍存在（防删除后的悬空引用） */
+  cases: CaseRow[]
   onClose: () => void
   onSaved: (row: IntakeRow, isNew: boolean) => void
   onDeleted?: (id: number) => void
@@ -59,7 +61,7 @@ function toForm(c: IntakeRow | null): FormState {
   }
 }
 
-export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted, onOpenCase }: Props) {
+export function IntakeEditor({ mode, initial, cases, onClose, onSaved, onDeleted, onOpenCase }: Props) {
   const { key, requestUnlock, ensureUnlocked } = useVault()
   const [form, setForm] = useState<FormState>(() => toForm(initial))
   const [noteChanged, setNoteChanged] = useState(false)
@@ -81,7 +83,15 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted, onOpe
    *   - 只有 converted=true（本次功能之前的老数据）→ 也算已转，但无 id 可跳
    */
   const convertedCaseId = initial?.case_id ?? null
-  const alreadyConverted = Boolean(initial?.case_id) || Boolean(initial?.converted)
+  /**
+   * 是否已转案（有效口径）：
+   *   - case_id 有值 **且该案件仍存在** → 已转，可跳转。
+   *     案件被删除后留下的悬空 case_id 按「未转」处理，否则编辑页会永远
+   *     显示「已转成案件」且无法再次转案（胡玉平案踩过此坑）。
+   *   - 只有 converted=true 且无 case_id（本次功能之前的老数据手动标记）→ 也算已转，无 id 可跳。
+   */
+  const caseStillExists = convertedCaseId != null && cases.some((c) => c.id === convertedCaseId)
+  const alreadyConverted = caseStillExists || (convertedCaseId == null && Boolean(initial?.converted))
 
   // 解锁后把「跟踪记录」换成解密原文
   useEffect(() => {
@@ -196,7 +206,11 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted, onOpe
     setConverting(true)
     setErr('')
     try {
-      const { caseId, caseRow, alreadyConverted } = await convertToCase(initial, { cause })
+      const { caseId, caseRow, alreadyConverted } = await convertToCase(initial, {
+        cause,
+        // 悬空 case_id（案件已被删）不算已转，允许重新转案
+        caseExists: (id) => cases.some((c) => c.id === id),
+      })
       setShowConvert(false)
       if (onOpenCase) onOpenCase(caseId, caseRow)
       else onClose()

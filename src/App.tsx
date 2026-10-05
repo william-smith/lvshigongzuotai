@@ -366,7 +366,15 @@ function Shell() {
     if (isNew) setCaseId(row.id)
   }
   const onCaseDeleted = (id: number) => {
-    setData((prev) => (prev ? { ...prev, cases: prev.cases.filter((c) => c.id !== id) } : prev))
+    setData((prev) => {
+      if (!prev) return prev
+      // 删案件的同时回清引用它的接案（case_id/converted），
+      // 否则接案页会一直显示「已转成案件」却跳不到案件（悬空引用）
+      const intakes = prev.intakes.map((i) =>
+        i.case_id === id ? { ...i, case_id: null, converted: false } : i,
+      )
+      return { ...prev, cases: prev.cases.filter((c) => c.id !== id), intakes }
+    })
     setEditing(undefined)
     setCaseId(null)
   }
@@ -546,6 +554,7 @@ function Shell() {
         <IntakeEditor
           mode={editingIntake ? 'edit' : 'create'}
           initial={editingIntake}
+          cases={data?.cases ?? []}
           onClose={() => setEditingIntake(undefined)}
           onSaved={onIntakeSaved}
           onDeleted={onIntakeDeleted}
