@@ -6,6 +6,9 @@ import { activeBackend, customConfigured, setBackend, writeCustom } from '../lib
 type Mode = 'login' | 'register' | 'forgot'
 type Source = 'cloud' | 'custom'
 
+/** 组件挂载时生效的后端；登录成功后若与之不同（中途切换过数据源），再刷新一次数据层即可 */
+const BOOT_BACKEND = activeBackend()
+
 export function Login() {
   const { login } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
@@ -28,8 +31,9 @@ export function Login() {
       setSource('custom')
       return
     }
+    // 不再整页刷新：登录请求按「当前生效后端」动态解析，登录成功后再刷一次数据层即可（见 submit）
     setBackend(s)
-    window.location.reload() // 各数据模块在顶层重新解析生效地址
+    setSource(s)
   }
 
   /** 保存自建库配置 → 切到自建库并刷新；之后登录请求即打到自建库 */
@@ -41,7 +45,7 @@ export function Login() {
     }
     writeCustom({ base: nasBase.trim(), key: nasKey.trim() })
     setBackend('custom')
-    window.location.reload()
+    setSource('custom')
   }
 
   // 登录表单
@@ -69,6 +73,9 @@ export function Login() {
     setBusy(true)
     try {
       await login(email.trim(), pw, remember)
+      // 登录成功：若本次登录的后端与挂载时不同（中途切换过数据源），刷新一次让数据层重解析；
+      // 同一后端则无需刷新，直接进入，避免白屏。
+      if (activeBackend() !== BOOT_BACKEND) window.location.reload()
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : '登录失败')
     } finally {

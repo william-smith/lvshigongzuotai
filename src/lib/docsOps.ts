@@ -70,8 +70,17 @@ export async function saveCaseFolder(row: {
 
 export async function loadDocFiles(): Promise<DocFile[]> {
   if (!isCloud || !API_BASE) return []
-  const res = await call('materials?select=*&rel_path=not.is.null&order=id.asc')
-  return (await res.json()) as DocFile[]
+  // 分页读取：云端 PostgREST 默认 db-max-rows=1000，单次 GET 会静默截断末尾行，
+  // 导致 existing 不全 → reconcile 把「已在库里」的文件误判为新增 → 写回时撞 uq_materials_case_rel 报 409。
+  const all: DocFile[] = []
+  const PAGE = 1000
+  for (let offset = 0; ; offset += PAGE) {
+    const res = await call(`materials?select=*&rel_path=not.is.null&order=id.asc&limit=${PAGE}&offset=${offset}`)
+    const rows = (await res.json()) as DocFile[]
+    all.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  return all
 }
 
 function toRow(caseId: number, f: { relPath: string; name: string; size: number }, prev?: DocFile) {
@@ -160,10 +169,15 @@ export async function applyReconcile(r: Reconcile, shouldAbort?: () => boolean):
   if (!isCloud || !API_BASE) return
   if (r.inserts.length) {
     if (shouldAbort?.()) return
+    // 注意：不能用 on_conflict=case_id,rel_path。uq_materials_case_rel 是「部分唯一索引」
+    // （where rel_path is not null），PostgREST 的 on_conflict 无法推断部分索引的 WHERE 谓词，
+    // 会触发 PostgreSQL 42P10（无匹配约束）→ 整批 400 被拒。
+    // 幂等靠调用方保证：loadDocFiles 已分页（existing 全量）+ doScan 写前重新拉索引（existing 最新），
+    // 已存在的 rel_path 不会进入 inserts，这里只做纯 INSERT。
     await call('materials', {
       method: 'POST',
       json: r.inserts,
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      headers: { Prefer: 'return=minimal' },
     })
   }
   for (const u of r.updates) {

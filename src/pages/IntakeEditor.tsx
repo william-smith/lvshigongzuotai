@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { CalendarRemindField } from '../components/CalendarRemindField'
 import { useVault } from '../store/vault'
 import { deleteIntake, saveIntake, type IntakeDraft } from '../lib/intakeOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
 import { useSwipeBack } from '../lib/gestures'
+import { toDateTimeLocal } from '../lib/types'
 import type { IntakeRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
@@ -21,6 +23,8 @@ interface FormState {
   first_contact: string
   signed_at: string
   converted: boolean
+  next_due: string
+  remind_rules: string[]
   note: string
 }
 
@@ -29,6 +33,8 @@ const emptyForm: FormState = {
   first_contact: '',
   signed_at: '',
   converted: false,
+  next_due: '',
+  remind_rules: [],
   note: '',
 }
 
@@ -39,6 +45,8 @@ function toForm(c: IntakeRow | null): FormState {
     first_contact: c.first_contact ?? '',
     signed_at: c.signed_at ?? '',
     converted: c.converted ?? false,
+    next_due: toDateTimeLocal(c.next_due),
+    remind_rules: c.remind_rules ?? [],
     note: c.note_mask ?? '',
   }
 }
@@ -145,6 +153,8 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
         first_contact: form.first_contact || null,
         signed_at: form.signed_at || null,
         converted: form.converted,
+        next_due: form.next_due || null,
+        remind_rules: form.remind_rules,
         note: trimmedNote || null,
         noteChanged,
         originalEnc: initial?.note_enc ?? null,
@@ -281,6 +291,22 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
                   />
                   <span className="text-sm">已转成案件（{form.converted ? '是' : '否'}）</span>
                 </label>
+              </Field>
+
+              {/* 节点时间（可选）+ 到期提醒（可选，不是每个接案都要设） */}
+              <Field label="节点时间（可选 · 精确到分钟）" hint="设了才进日历提醒">
+                <input
+                  type="datetime-local"
+                  value={form.next_due}
+                  onChange={set('next_due')}
+                  className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+                />
+              </Field>
+              <Field label="到期提醒" hint="在日历里提前多久提醒">
+                <CalendarRemindField
+                  value={form.remind_rules}
+                  onChange={(v) => setForm((f) => ({ ...f, remind_rules: v }))}
+                />
               </Field>
 
               {/* 跟踪记录 */}

@@ -45,16 +45,36 @@ BEGIN
     'METHOD:PUBLISH'
   ];
 
+  -- 案件 + 接案合并进同一份日历：
+  --   cases  → UID=case-<id>，matter=next_action（下一节点）
+  --   intakes → UID=intake-<id>，matter=固定「接案跟踪」（接案无案由/下一节点字段）
+  -- 二者都按 next_due 升序合并遍历；接案不设 next_due 则不进日历（不是每个接案都要提醒）
   FOR v_case IN
-    SELECT id, cause, client, next_due, next_action, remind_rules
+    SELECT
+      'case-' || id::text || '@lawyer-workbench'   AS uid,
+      client,
+      cause,
+      next_action                                  AS matter,
+      next_due,
+      remind_rules
     FROM cases
     WHERE stage_norm = '在办' AND next_due IS NOT NULL
+    UNION ALL
+    SELECT
+      'intake-' || id::text || '@lawyer-workbench' AS uid,
+      client,
+      NULL::text                                    AS cause,
+      '接案跟踪'::text                               AS matter,
+      next_due,
+      remind_rules
+    FROM intakes
+    WHERE next_due IS NOT NULL
     ORDER BY next_due
   LOOP
     -- next_due 为基础 naive timestamp（北京时间），转 UTC 绝对时刻输出 Z
     v_dt := to_char((v_case.next_due AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC', 'YYYYMMDD"T"HH24MISS') || 'Z';
-    v_uid := 'case-' || v_case.id::text || '@lawyer-workbench';
-    -- 日历上只写两样：案件名称（委托人·案由）+ 具体事项（下一节点）
+    v_uid := v_case.uid;
+    -- 日历上只写两样：名称（委托人·案由 / 委托人·接案跟踪）+ 具体事项（下一节点）
     v_name := trim(COALESCE(v_case.client, ''));
     IF v_name <> '' AND COALESCE(v_case.cause, '') <> '' THEN
       v_name := v_name || ' · ' || trim(v_case.cause);
@@ -62,9 +82,9 @@ BEGIN
       v_name := trim(COALESCE(v_case.cause, ''));
     END IF;
     IF v_name = '' THEN
-      v_name := '案件';
+      v_name := '事件';
     END IF;
-    v_matter := trim(COALESCE(v_case.next_action, ''));
+    v_matter := trim(COALESCE(v_case.matter, ''));
     v_sum := v_name;
     IF v_matter <> '' THEN
       v_sum := v_sum || ' · ' || v_matter;

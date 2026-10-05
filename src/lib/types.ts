@@ -26,6 +26,10 @@ export interface IntakeRow {
   first_contact?: string | null
   signed_at?: string | null
   converted?: boolean
+  /** 接案节点时间（精确到分钟）。设了才进日历；不设则不进日历（不是每个接案都要提醒） */
+  next_due?: string | null
+  /** 接案提醒规则：ISO8601 duration 字符串数组（如 ["PT1H","P1D"]），空=不提醒 */
+  remind_rules?: string[] | null
   note_mask?: string | null
   note_enc?: string | null
   phones: ContactEnc[]

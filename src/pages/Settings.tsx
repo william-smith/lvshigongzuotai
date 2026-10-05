@@ -238,14 +238,30 @@ function CalendarCard() {
   async function generateOrRefresh() {
     setBusy(true)
     setErr('')
-    const t = await ensureToken(backend)
-    setBusy(false)
-    if (!t) {
-      setErr('生成订阅密钥失败，请检查网络或登录状态后重试')
-      return
+    try {
+      // 「重新生成」= 真换新：先吊销本机这条旧密钥并清掉本地，再生成一条新的。
+      // 各设备的链接相互独立，这里只轮换本机这条；另一台设备生成的链接不受影响。
+      if (token) {
+        try {
+          await revokeToken(token, backend)
+        } catch {
+          /* 吊销失败也继续换新（旧条仍可用「吊销」处理） */
+        }
+        clearLocalToken(backend)
+      }
+      const t = await ensureToken(backend)
+      if (!t) {
+        setErr('未能生成订阅密钥，请重试')
+        return
+      }
+      setToken(t)
+      setUrl(subscriptionConfigured(backend) ? subscriptionUrl(t, backend) : '')
+    } catch (e) {
+      // ensureToken 抛出的都是带原因的明确错误（超时 / 401 登录过期 / 服务端拒绝）
+      setErr((e as Error).message || '生成失败，请重试')
+    } finally {
+      setBusy(false) // 无论成败都复位，绝不停留在「处理中」
     }
-    setToken(t)
-    setUrl(subscriptionConfigured(backend) ? subscriptionUrl(t, backend) : '')
   }
 
   function copy() {
@@ -274,33 +290,45 @@ function CalendarCard() {
     setUrl('')
   }
 
+  // Section 已提供标题「日历订阅」+ 图标 + 描述，卡内不重复标题；
+  // 卡片容器与其他设置模块一致（白底描边圆角）。
   return (
     <div className="rounded-xl border border-line bg-white p-5">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon name="calendar" className="w-4 h-4 text-ink-2" />
-        <div className="text-sm font-semibold text-ink">日历订阅</div>
-        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-brand/10 text-brand">
-          来源：{srcName}
-        </span>
+      {/* 顶部：当前数据源徽章 + 多设备规则一句话 */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-2xs px-2 py-1 rounded-full bg-brand/10 text-brand shrink-0">{srcName}</span>
+        <span className="text-2xs text-ink-3">手机、电脑可各自生成一条链接，同时有效、互不影响</span>
       </div>
-      <p className="text-xs text-ink-3 leading-relaxed mb-4">
-        生成一枚专属订阅链接，添加到手机/电脑的日历 App，即可在案件节点到期前收到提醒
-        （未设置「到期提醒」的案件会在节点时间准时提醒）。订阅链接含密钥，请勿外泄；吊销后旧链接立即失效。
-      </p>
 
       {!ready ? (
-        <p className="text-xs text-ink-3 mb-3">
+        <div className="rounded-lg border border-dashed border-line bg-canvas px-3 py-4 mb-3 text-xs text-ink-3 leading-relaxed">
           未配置自建库日历地址（构建变量 <span className="font-mono">VITE_NAS_CAL_BASE</span>
           ），本模式下暂不能生成订阅链接。云端公开库不受影响。
-        </p>
-      ) : url ? (
-        <div className="rounded-lg border border-line bg-canvas px-3 py-2.5 mb-3">
-          <div className="text-2xs text-ink-3 mb-1">订阅 URL（添加到日历 App）</div>
-          <div className="text-2xs font-mono text-ink-2 break-all select-all">{url}</div>
         </div>
-      ) : (
-        <p className="text-xs text-ink-3 mb-3">尚未生成订阅链接。</p>
-      )}
+      ) : url ? (
+        <div className="rounded-lg border border-line bg-canvas p-3 mb-3">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-2xs font-medium text-ink-2">订阅链接</span>
+            <span className="text-2xs text-ink-3">含密钥 · 请勿外泄</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 min-w-0 text-2xs font-mono text-ink-2 truncate select-all" title={url}>
+              {url}
+            </code>
+            <button
+              type="button"
+              onClick={copy}
+              className={`shrink-0 h-7 px-2.5 rounded-md text-2xs border transition-colors ${
+                copied
+                  ? 'border-brand/40 bg-brand/10 text-brand'
+                  : 'border-line bg-white text-ink-2 hover:bg-canvas'
+              }`}
+            >
+              {copied ? '已复制' : '复制'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-2">
         <button
@@ -309,41 +337,28 @@ function CalendarCard() {
           disabled={busy || !ready}
           className="px-3.5 h-9 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-60 text-white text-sm font-medium transition-colors"
         >
-          {busy ? '处理中…' : url ? '重新生成' : '生成订阅 URL'}
+          {busy ? '处理中…' : url ? '重新生成' : '生成订阅链接'}
         </button>
         {url && (
-          <>
-            <button
-              type="button"
-              onClick={copy}
-              className="px-3.5 h-9 rounded-lg border border-line text-sm text-ink-2 hover:bg-canvas transition-colors"
-            >
-              {copied ? '已复制' : '复制 URL'}
-            </button>
-            <button
-              type="button"
-              onClick={revoke}
-              disabled={busy}
-              className="px-3.5 h-9 rounded-lg border border-line text-sm text-danger hover:bg-[#FEF2F2] transition-colors"
-            >
-              吊销
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={revoke}
+            disabled={busy}
+            className="px-3.5 h-9 rounded-lg border border-line text-sm text-danger hover:bg-[#FEF2F2] transition-colors"
+          >
+            吊销
+          </button>
         )}
       </div>
 
       {err && <div className="mt-3 px-3 py-2 rounded-lg bg-danger/6 border border-danger/20 text-xs text-danger">{err}</div>}
 
-      <div className="mt-4 border-t border-line pt-3 space-y-1.5">
-        <div className="text-2xs font-medium text-ink-2">各平台添加方式</div>
-        <ul className="text-2xs text-ink-3 leading-relaxed list-disc pl-4 space-y-1">
-          <li><span className="text-ink-2">iOS / iPhone：</span>设置 → 日历 → 添加账户 → 其他 → 添加订阅日历，粘贴上面的 URL。</li>
-          <li><span className="text-ink-2">安卓：</span>打开 Google 日历 → 设置 → 添加日历 → 通过 URL → 粘贴上面的 URL。</li>
-          <li><span className="text-ink-2">Outlook：</span>左侧「我的日历」旁 + → 添加互联网日历（通过 Web 链接）→ 粘贴上面的 URL。</li>
-        </ul>
-      </div>
-
-      <p className="mt-3 text-2xs text-ink-3 leading-relaxed">{srcHint}</p>
+      {/* 说明注释：添加方式 + 提醒规则 + 数据来源；不用标题、不单独高亮某个 App */}
+      <p className="mt-4 border-t border-line pt-3 text-2xs text-ink-3 leading-relaxed">
+        添加到日历：安卓用 ICSx⁵（安装后点「＋」粘贴上面的链接），iPhone 在 设置 → 日历 → 账户 → 添加账户 → 其他 → 添加订阅日历 粘贴链接。
+        未设置「到期提醒」的案件会在节点时间准时提醒；「重新生成」和「吊销」只影响本机这条链接，另一台设备不受影响。
+        {srcHint}
+      </p>
     </div>
   )
 }
@@ -474,6 +489,14 @@ export function Settings() {
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-canvas text-2xs text-ink-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               {email || '未登录'}
+              {/* 当前生效数据源：登录/数据/日历订阅都跟着它走 */}
+              <span
+                className={`px-1.5 py-0.5 rounded text-2xs font-medium ${
+                  onNas ? 'bg-amber-100 text-amber-700' : 'bg-brand/10 text-brand'
+                }`}
+              >
+                {onNas ? '自建库' : '云端'}
+              </span>
             </span>
           }
         >
@@ -563,7 +586,7 @@ export function Settings() {
           <Section
             icon="calendar"
             title="日历订阅"
-            desc="生成专属订阅链接，添加到各平台日历 App，即可收到案件节点到期提醒。订阅来源跟随你登录的数据源。"
+            desc="生成专属订阅链接，在日历 App 里订阅后即可收到案件节点到期提醒；来源跟随你登录的数据源。"
           >
             <CalendarCard />
           </Section>

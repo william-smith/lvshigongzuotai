@@ -311,7 +311,12 @@ export function MaterialsView({
         return
       }
 
-      const existing = files.filter((f) => f.case_id === current.id)
+      // 写索引前重新拉一次云端，保证 existing 反映最新状态：
+      // 手机端页面可能开了很久、或电脑端刚扫过同一案件 —— 用陈旧 existing 会把「已在库里」的文件
+      // 当成新增再插一次，撞 uq_materials_case_rel 唯一约束。loadDocFiles 已分页（全量），这里取最新。
+      const cloudAll = await loadDocFiles()
+      setFiles(cloudAll)
+      const existing = cloudAll.filter((f) => f.case_id === current.id)
       const r = reconcile(current.id, list, existing)
       await applyReconcile(r, aborted)
       if (aborted()) {

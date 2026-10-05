@@ -96,13 +96,24 @@ export function subscriptionUrl(key: string, backend: 'cloud' | 'nas'): string {
 
 const KEY_STORAGE_PREFIX = 'lw.ical.key.v1.'
 
+/** fetch 超时：网络差/被墙时不能让「处理中」永远转下去 */
+function reqSignal(ms = 15000): AbortSignal | undefined {
+  try {
+    return typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /* ---------------- ical_tokens 读写 ---------------- */
 
 /**
  * 维护并取回指定后端的订阅密钥（明文，仅存本机 localStorage）。
  *   - 已有 → 直接返回；
  *   - 没有 → 生成明文 key，sha256 得 hash，POST 到 <该后端base>/ical_tokens
- *     body {token_hash: hash}；成功把明文存 localStorage 并返回，失败返回 null。
+ *     body {token_hash: hash}；成功把明文存 localStorage 并返回。
+ * 失败不再静默返回 null，而是 **throw 带原因的 Error**（401 → 提示重新登录；
+ * 超时/网络 → 提示检查网络），由调用方展示 —— 否则用户只看到永远转圈的「处理中」。
  * 用显式 backend 直连该后端（不经 authedFetch，避免 apikey 被当前生效后端覆盖）；
  * 鉴权用该后端自己的会话 JWT（sessionTokenFor），未登录该后端时退化为 anon key
  * （云端 RLS 会拒、NAS 单用户 RLS 放行）。
@@ -116,22 +127,35 @@ export async function ensureToken(backend: 'cloud' | 'nas'): Promise<string | nu
     /* 隐私模式读不了 */
   }
 
+  if (!crypto?.subtle) {
+    throw new Error('当前浏览器不在安全上下文（需 HTTPS），无法生成订阅密钥')
+  }
   const plain = genKey()
   const hash = await sha256Hex(plain)
   const cfg = apiFor(backend === 'cloud' ? 'cloud' : 'custom')
   if (!cfg.base || !cfg.key) return null
   const token = sessionTokenFor(backend === 'cloud' ? 'cloud' : 'custom')
-  const res = await fetch(`${cfg.base}/ical_tokens`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: cfg.key,
-      Authorization: `Bearer ${token ?? cfg.key}`,
-      Prefer: 'return=minimal',
-    },
-    body: JSON.stringify({ token_hash: hash }),
-  })
-  if (!res.ok) return null
+  let res: Response
+  try {
+    res = await fetch(`${cfg.base}/ical_tokens`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: cfg.key,
+        Authorization: `Bearer ${token ?? cfg.key}`,
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ token_hash: hash }),
+      signal: reqSignal(),
+    })
+  } catch {
+    throw new Error('网络请求超时或失败，请检查网络后重试')
+  }
+  if (!res.ok) {
+    const t = (await res.text().catch(() => '')).slice(0, 120)
+    const hint = res.status === 401 || res.status === 403 ? '登录可能已过期，请退出后重新登录再试' : ''
+    throw new Error(`生成订阅密钥失败（${res.status}）${hint ? `：${hint}` : ''} ${t}`)
+  }
 
   try {
     localStorage.setItem(storageKey, plain)
@@ -141,7 +165,7 @@ export async function ensureToken(backend: 'cloud' | 'nas'): Promise<string | nu
   return plain
 }
 
-/** 吊销密钥：PATCH <该后端base>/ical_tokens?token_hash=eq.<hash> body {revoked:true} */
+/** 吊销密钥：PATCH <该后端base>/ical_tokens?token_hash=eq.<hash> body {revoked:true}（带超时，失败由调用方兜底） */
 export async function revokeToken(key: string, backend: 'cloud' | 'nas'): Promise<void> {
   const hash = await sha256Hex(key)
   const cfg = apiFor(backend === 'cloud' ? 'cloud' : 'custom')
@@ -155,6 +179,7 @@ export async function revokeToken(key: string, backend: 'cloud' | 'nas'): Promis
       Authorization: `Bearer ${token ?? cfg.key}`,
     },
     body: JSON.stringify({ revoked: true }),
+    signal: reqSignal(),
   })
 }
 

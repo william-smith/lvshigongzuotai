@@ -33,6 +33,10 @@ export interface IntakeDraft {
   first_contact?: string | null
   signed_at?: string | null
   converted?: boolean
+  /** 接案节点时间（可选，精确到分钟）。设了才进日历；不设则不进日历 */
+  next_due?: string | null
+  /** 接案提醒规则：ISO8601 duration 数组，空=不提醒 */
+  remind_rules?: string[] | null
   /** 「跟踪记录」的当前文本（解锁时为原文，未解锁时为脱敏文本） */
   note?: string | null
   /** 用户是否改动过「跟踪记录」；未改动则保留原密文 */
@@ -81,6 +85,8 @@ function buildRow(
     first_contact: draft.first_contact ?? null,
     signed_at: draft.signed_at ?? null,
     converted: draft.converted ?? false,
+    next_due: draft.next_due ?? null,
+    remind_rules: draft.remind_rules ?? null,
     note_mask: note.mask,
     note_enc: note.enc,
     phones: existingPhones ?? [],
@@ -116,6 +122,8 @@ export async function saveIntake(
         first_contact: row.first_contact,
         signed_at: row.signed_at,
         converted: row.converted,
+        next_due: row.next_due,
+        remind_rules: row.remind_rules,
         note_mask: row.note_mask,
         note_enc: row.note_enc,
       }),
@@ -137,6 +145,8 @@ export async function saveIntake(
       first_contact: row.first_contact,
       signed_at: row.signed_at,
       converted: row.converted,
+      next_due: row.next_due,
+      remind_rules: row.remind_rules,
       note_mask: row.note_mask,
       note_enc: row.note_enc,
       updated_at: new Date().toISOString(),

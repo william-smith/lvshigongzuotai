@@ -14,6 +14,12 @@ import { apiFor, customConfigured, resolveApi, type BackendId } from './apiConfi
 const { base: REST_BASE, key: ANON_KEY, backend: ACTIVE_BACKEND } = resolveApi()
 const AUTH_BASE = REST_BASE ? REST_BASE.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : ''
 
+/** 登录/注册/找回密码时按「当前生效后端」动态取认证地址——切换数据源后无需整页刷新即可打到所选后端 */
+function authBaseNow(): { authBase: string; key: string } {
+  const r = resolveApi()
+  return { authBase: r.base ? r.base.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : '', key: r.key }
+}
+
 /** 只有接了云端才需要登录；本地演示数据直接放行 */
 export const authEnabled = Boolean(AUTH_BASE && ANON_KEY)
 
@@ -23,32 +29,41 @@ export const authEnabled = Boolean(AUTH_BASE && ANON_KEY)
  * 自建库验不过签名 → 401 → 取不到案件。
  * 因此每个后端各存一份会话（key 带后端标签），切换后端后各自独立登录。
  */
+/**
+ * 会话键按「当前生效后端」派生。切换后端后不再整页刷新，登录时必须按最新后端算，
+ * 否则会话会被存到错误的键、刷新后读不到（2026-10-05 优化：去掉切换时的刷新）。
+ */
 function sessionTag(): string {
-  if (ACTIVE_BACKEND === 'cloud') return 'cloud'
+  const r = resolveApi()
+  if (r.backend === 'cloud') return 'cloud'
   try {
-    const host = new URL(REST_BASE || '').host
+    const host = new URL(r.base || '').host
     return 'nas-' + host.replace(/[^a-z0-9]/gi, '_')
   } catch {
     return 'nas'
   }
 }
-const STORAGE = `lw.auth.v1.${sessionTag()}`
-const TEMP = `lw.auth.temp.${sessionTag()}`
+function sessionStorageKey(): string {
+  return `lw.auth.v1.${sessionTag()}`
+}
+function sessionTempKey(): string {
+  return `lw.auth.temp.${sessionTag()}`
+}
 
 // 一次性迁移：把旧的全局会话键迁移到按后端命名的新键，避免老用户被强制登出。
 ;(function migrateLegacySession() {
   try {
-    if (ACTIVE_BACKEND === 'cloud' && !localStorage.getItem(STORAGE)) {
+    if (ACTIVE_BACKEND === 'cloud' && !localStorage.getItem(sessionStorageKey())) {
       const legacy = localStorage.getItem('lw.auth.v1')
       if (legacy) {
-        localStorage.setItem(STORAGE, legacy)
+        localStorage.setItem(sessionStorageKey(), legacy)
         localStorage.removeItem('lw.auth.v1')
       }
     }
-    if (ACTIVE_BACKEND === 'cloud' && !sessionStorage.getItem(TEMP)) {
+    if (ACTIVE_BACKEND === 'cloud' && !sessionStorage.getItem(sessionTempKey())) {
       const lt = sessionStorage.getItem('lw.auth.temp')
       if (lt) {
-        sessionStorage.setItem(TEMP, lt)
+        sessionStorage.setItem(sessionTempKey(), lt)
         sessionStorage.removeItem('lw.auth.temp')
       }
     }
@@ -293,20 +308,20 @@ export function sessionTokenFor(backend: BackendId): string | null {
 /** 勾「记住我」→ localStorage（长期）；否则 → sessionStorage（关掉标签页即失效） */
 function readSession(): Session | null {
   try {
-    return parse(localStorage.getItem(STORAGE)) ?? parse(sessionStorage.getItem(TEMP))
+    return parse(localStorage.getItem(sessionStorageKey())) ?? parse(sessionStorage.getItem(sessionTempKey()))
   } catch {
-    return parse(localStorage.getItem(STORAGE))
+    return parse(localStorage.getItem(sessionStorageKey()))
   }
 }
 
 function writeSession(s: Session | null, remember = true) {
   try {
-    localStorage.removeItem(STORAGE)
-    sessionStorage.removeItem(TEMP)
+    localStorage.removeItem(sessionStorageKey())
+    sessionStorage.removeItem(sessionTempKey())
     if (s) {
       const raw = JSON.stringify(s)
-      if (remember) localStorage.setItem(STORAGE, raw)
-      else sessionStorage.setItem(TEMP, raw)
+      if (remember) localStorage.setItem(sessionStorageKey(), raw)
+      else sessionStorage.setItem(sessionTempKey(), raw)
     }
   } catch {
     /* 隐私模式下写不了就算了，只是每次要重新登录 */
@@ -360,12 +375,13 @@ function netError(e: unknown): Error {
 }
 
 export async function signIn(email: string, password: string, remember = true): Promise<Session> {
-  if (!AUTH_BASE || !ANON_KEY) throw new Error('未配置 VITE_API_BASE')
+  const { authBase, key } = authBaseNow()
+  if (!authBase || !key) throw new Error('未配置数据源地址（云端或自建库）')
   let res: Response
   try {
-    res = await timedFetch(`${AUTH_BASE}/token?grant_type=password`, {
+    res = await timedFetch(`${authBase}/token?grant_type=password`, {
       method: 'POST',
-      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      headers: { apikey: key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     })
   } catch (e) {
@@ -398,12 +414,13 @@ export interface SignUpResult {
  * 邮箱已存在 → Supabase 返回 422 / 400，按已有账号提示。
  */
 export async function signUp(email: string, password: string): Promise<SignUpResult> {
-  if (!AUTH_BASE || !ANON_KEY) throw new Error('未配置 VITE_API_BASE')
+  const { authBase, key } = authBaseNow()
+  if (!authBase || !key) throw new Error('未配置数据源地址（云端或自建库）')
   let res: Response
   try {
-    res = await timedFetch(`${AUTH_BASE}/signup`, {
+    res = await timedFetch(`${authBase}/signup`, {
       method: 'POST',
-      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      headers: { apikey: key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, gotrue_meta_security: { captcha_token: null } }),
     })
   } catch (e) {
@@ -532,11 +549,12 @@ export async function saveProfileRemote(p: LawyerProfile): Promise<{ ok: boolean
  * 避免攻击者借此探查哪些邮箱已注册。
  */
 export async function requestPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
-  if (!AUTH_BASE || !ANON_KEY) return { ok: false, error: '未配置 VITE_API_BASE' }
+  const { authBase, key } = authBaseNow()
+  if (!authBase || !key) return { ok: false, error: '未配置数据源地址（云端或自建库）' }
   try {
-    const res = await timedFetch(`${AUTH_BASE}/recover`, {
+    const res = await timedFetch(`${authBase}/recover`, {
       method: 'POST',
-      headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+      headers: { apikey: key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.trim() }),
     })
     if (!res.ok) {
