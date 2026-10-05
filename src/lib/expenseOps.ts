@@ -17,11 +17,9 @@
  */
 import { authedFetch } from './auth'
 import { recordTombstone } from './syncOps'
-import { isCloud } from './data'
+import { isCloud, API_BASE as BASE } from './data'
 import { decryptString, encryptString, maskSensitive } from './crypto'
 import type { ExpenseRow } from './types'
-
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
 
 /**
  * 只写密文模式：明文列清空后必须打开，否则前端会把金额明文又写回去。

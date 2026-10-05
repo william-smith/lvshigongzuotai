@@ -23,7 +23,10 @@ let failed = false;
 for (const [label, path] of probes) {
   try {
     const r = await fetch(`${P}/${path}`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      // 只带 apikey。绝不能加 `Authorization: Bearer <anon key>`——云端会优先校验
+      // Authorization，把 anon key 当用户 JWT 判为无效 → 401 Invalid API key。
+      // 真实前端也是这个姿势（authedFetch 的 Authorization 放用户 access_token）。
+      headers: { apikey: key },
     });
     const body = (await r.text()).slice(0, 200);
     const bad = r.status !== 200;

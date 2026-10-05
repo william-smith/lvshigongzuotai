@@ -12,11 +12,9 @@
  */
 import { authedFetch } from './auth'
 import { recordTombstone } from './syncOps'
-import { isCloud } from './data'
+import { isCloud, API_BASE as BASE } from './data'
 import { encryptString, maskSensitive } from './crypto'
 import { normalizeStage, type CaseRow, type IntakeRow } from './types'
-
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
 /**
  * 只声明「额外请求头」：apikey 与 Authorization 由 authedFetch 统一注入——
  * 它在 401 时会用最新 token 自动重试一次，且只有当前这枚 token 确实失效才登出，
