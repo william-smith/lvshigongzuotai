@@ -11,6 +11,8 @@ interface CalEvent {
   cause: string | null;
   /** 具体事项：案件/接案都是 next_action（接案未填则回落「接案跟踪」） */
   matter: string | null;
+  /** 案由段：案件=cause；接案固定「接案」，使标题统一为「委托人 · 接案 · 事项」 */
+  cause?: string | null;
   next_due: string | null;
   remind_rules: string[] | null;
 }
@@ -162,8 +164,10 @@ export const onRequest: PagesFunction = async (context) => {
       ...(intakes || []).map((i) => ({
         uid: `intake-${i.id}@lawyer-workbench`,
         client: i.client,
-        cause: null,
-        // 接案事项 = 用户填的「节点事项」；没填才回落成「接案跟踪」
+        // 接案的「案由」段固定为「接案」，与案件的案由列对齐：
+        // 日历标题统一呈「委托人 · 接案 · 节点事项」
+        cause: '接案',
+        // 事项 = 用户填的「节点事项」；没填才回落成「接案跟踪」
         matter: (i.next_action || '').trim() || '接案跟踪',
         next_due: i.next_due,
         remind_rules: i.remind_rules,

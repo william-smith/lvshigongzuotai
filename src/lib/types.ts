@@ -25,7 +25,10 @@ export interface IntakeRow {
   client: string
   first_contact?: string | null
   signed_at?: string | null
+  /** 是否已转成案件（历史布尔标记，判断"是否已转"以 case_id 为准） */
   converted?: boolean
+  /** 由本接案转成的案件 id；为空=尚未转案。是「已转成案件」状态的可靠依据 */
+  case_id?: number | null
   /** 接案节点时间（精确到分钟）。设了才进日历；不设则不进日历（不是每个接案都要提醒） */
   next_due?: string | null
   /** 接案节点事项：要做什么（如「约时间面谈」「发委托合同」）。日历标题里显示，空则回落「接案跟踪」 */

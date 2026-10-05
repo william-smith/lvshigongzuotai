@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { CalendarRemindField } from '../components/CalendarRemindField'
 import { useVault } from '../store/vault'
-import { deleteIntake, saveIntake, type IntakeDraft } from '../lib/intakeOps'
+import { deleteIntake, saveIntake, convertToCase, type IntakeDraft } from '../lib/intakeOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
 import { useSwipeBack } from '../lib/gestures'
 import { toDateTimeLocal } from '../lib/types'
-import type { IntakeRow } from '../lib/types'
+import type { CaseRow, IntakeRow } from '../lib/types'
 
 type Mode = 'create' | 'edit'
 
@@ -16,6 +16,11 @@ interface Props {
   onClose: () => void
   onSaved: (row: IntakeRow, isNew: boolean) => void
   onDeleted?: (id: number) => void
+  /**
+   * 转案成功后跳到该案件（由 App 打开案件编辑页）。
+   * createdCase = 这次新建出来的案件行（老数据只有已转标记、没新建时为 null）。
+   */
+  onOpenCase?: (caseId: number, createdCase: CaseRow | null) => void
 }
 
 interface FormState {
@@ -54,19 +59,29 @@ function toForm(c: IntakeRow | null): FormState {
   }
 }
 
-export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Props) {
+export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted, onOpenCase }: Props) {
   const { key, requestUnlock, ensureUnlocked } = useVault()
   const [form, setForm] = useState<FormState>(() => toForm(initial))
   const [noteChanged, setNoteChanged] = useState(false)
   const [decrypting, setDecrypting] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [converting, setConverting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [convertCause, setConvertCause] = useState<string | null>(null)
+  const [showConvert, setShowConvert] = useState(false)
   const [err, setErr] = useState('')
   const firstFieldRef = useRef<HTMLInputElement | null>(null)
 
   const hasOriginalEnc = Boolean(initial?.note_enc)
   /** 原记录有密文但当前未解锁 → 编辑框里只能看到脱敏文本，改了会丢隐藏位 */
   const lockedWithSecret = hasOriginalEnc && !key
+  /**
+   * 是否已转案：
+   *   - case_id 有值 → 已转，且知道是哪条案件（可跳转）
+   *   - 只有 converted=true（本次功能之前的老数据）→ 也算已转，但无 id 可跳
+   */
+  const convertedCaseId = initial?.case_id ?? null
+  const alreadyConverted = Boolean(initial?.case_id) || Boolean(initial?.converted)
 
   // 解锁后把「跟踪记录」换成解密原文
   useEffect(() => {
@@ -169,6 +184,30 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
       setErr((e as Error).message || '保存失败')
     } finally {
       setSaving(false)
+    }
+  }
+
+  /**
+   * 转成案件：建案件 + 回写关联 + 迁联系人。
+   * 成功后就地切到该案件（接案本身已标记为已转，日历里也不再重复出现）。
+   */
+  const doConvert = async (cause: string) => {
+    if (!initial || converting) return
+    setConverting(true)
+    setErr('')
+    try {
+      const { caseId, caseRow, alreadyConverted } = await convertToCase(initial, { cause })
+      setShowConvert(false)
+      if (onOpenCase) onOpenCase(caseId, caseRow)
+      else onClose()
+      // 老数据只标了 converted、没有 case_id：没有可打开的案件，留在原页并提示
+      if (alreadyConverted && !onOpenCase) {
+        setErr('该接案此前已标记为「已转成案件」')
+      }
+    } catch (e) {
+      setErr((e as Error).message || '转案失败')
+    } finally {
+      setConverting(false)
     }
   }
 
@@ -284,16 +323,62 @@ export function IntakeEditor({ mode, initial, onClose, onSaved, onDeleted }: Pro
                 </Field>
               </div>
 
-              {/* 已转案件 */}
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={form.converted}
-                  onChange={(e) => setForm((f) => ({ ...f, converted: e.target.checked }))}
-                  className="w-4 h-4 accent-brand"
-                />
-                <span className="text-sm text-ink-2">已转成案件</span>
-              </label>
+              {/* 转案：未转给按钮，已转显示状态（可跳到该案件） */}
+              {alreadyConverted ? (
+                <button
+                  type="button"
+                  disabled={!convertedCaseId}
+                  onClick={() => convertedCaseId && onOpenCase?.(convertedCaseId, null)}
+                  className="w-full h-10 rounded-lg border border-line bg-canvas text-sm text-ink-2 flex items-center justify-center gap-1.5 disabled:opacity-70 enabled:hover:bg-[#F3F4F6] enabled:active:scale-[0.995]"
+                >
+                  <Icon name="check" className="w-3.5 h-3.5 text-brand" />
+                  已转成案件
+                  {convertedCaseId ? (
+                    <span className="text-brand">查看</span>
+                  ) : (
+                    <span className="text-2xs text-ink-3">（转案前手动标记）</span>
+                  )}
+                </button>
+              ) : showConvert ? (
+                <div className="rounded-lg border border-line bg-canvas p-3 space-y-2.5">
+                  <div className="text-2xs text-ink-2 leading-relaxed">
+                    将新建一条案件，当事人、日期、节点与提醒一并带过去，跟踪记录转为「详细情况」。
+                  </div>
+                  <input
+                    value={convertCause ?? ''}
+                    onChange={(e) => setConvertCause(e.target.value)}
+                    placeholder="案由，如：劳动争议（可留空）"
+                    className="w-full h-9 px-3 rounded-lg border border-line bg-white text-sm outline-none focus:border-brand"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowConvert(false)}
+                      className="h-9 px-3.5 rounded-lg border border-line text-sm text-ink-2 bg-white"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={converting}
+                      onClick={() => doConvert(convertCause ?? '')}
+                      className="h-9 px-3.5 rounded-lg bg-brand text-white text-sm font-medium disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {converting && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                      {converting ? '转换中…' : '确认转案'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowConvert(true)}
+                  className="w-full h-10 rounded-lg border border-brand/40 bg-brand/5 text-brand text-sm font-medium flex items-center justify-center gap-1.5 hover:bg-brand/10 active:scale-[0.995]"
+                >
+                  <Icon name="plus" className="w-3.5 h-3.5" />
+                  转成案件
+                </button>
+              )}
 
               {/* 日程提醒：节点事项 + 节点时间 + 到期提醒（三者同属日历，合成一块避免字段散乱） */}
               <div className="rounded-xl border border-line bg-canvas/40 p-3.5 space-y-3.5">

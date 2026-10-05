@@ -63,7 +63,7 @@ BEGIN
     SELECT
       'intake-' || id::text || '@lawyer-workbench' AS uid,
       client,
-      NULL::text                                    AS cause,
+      '接案'::text                                  AS cause,
       COALESCE(NULLIF(trim(next_action), ''), '接案跟踪') AS matter,
       next_due,
       remind_rules

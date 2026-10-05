@@ -529,6 +529,22 @@ function Shell() {
           onClose={() => setEditingIntake(undefined)}
           onSaved={onIntakeSaved}
           onDeleted={onIntakeDeleted}
+          onOpenCase={(_caseId, createdCase) => {
+            // 关掉接案编辑页；若拿到了新建的案件行，直接插进本地缓存并打开
+            setEditingIntake(undefined)
+            if (createdCase) {
+              setData((prev) =>
+                prev && !prev.cases.some((c) => c.id === createdCase.id)
+                  ? { ...prev, cases: [createdCase, ...prev.cases] }
+                  : prev,
+              )
+              goto('cases')
+              setCaseId(createdCase.id)
+              setEditing(createdCase)
+            } else {
+              goto('cases')
+            }
+          }}
         />
       )}
     </div>

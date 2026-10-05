@@ -14,7 +14,7 @@ import { authedFetch } from './auth'
 import { recordTombstone } from './syncOps'
 import { isCloud } from './data'
 import { encryptString, maskSensitive } from './crypto'
-import type { IntakeRow } from './types'
+import { normalizeStage, type CaseRow, type IntakeRow } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
 /**
@@ -180,4 +180,88 @@ export async function deleteIntake(id: number): Promise<void> {
   }
   // 记墓碑：让双向同步把这次删除传播到对端，避免下次同步又把它补回来
   void recordTombstone('intakes', id)
+}
+
+/**
+ * 接案转案件。
+ *
+ * 做三件事，顺序不可颠倒（失败要能安全重试）：
+ *   1. 建案件：当事人/首次接触/签单日/节点事项/节点时间/到期提醒 全部继承过来，
+ *      「跟踪记录」搬成案件的「详细情况」（含密文一并搬，锁定状态也能无损转移）。
+ *   2. 记关联：intakes.case_id = 新案件 id、converted = true。
+ *      靠 case_id 而不是光靠 converted，才能判断"是否已有案件"并防重复转换。
+ *   3. 迁联系人：contacts 的 intake_id 改成 case_id，让电话跟着案子走
+ *      （contacts 一直有 case_id 列，只是此前都空着）。
+ *
+ * 幂等：若该接案已带 case_id，直接返回那个案件，不会重复建。
+ */
+export async function convertToCase(
+  intake: IntakeRow,
+  opts: { cause?: string | null; stage?: string | null } = {},
+): Promise<{ caseId: number; caseRow: CaseRow | null; alreadyConverted: boolean }> {
+  // 已经转过：直接返回既有案件，避免重复建案
+  if (intake.case_id) {
+    return { caseId: intake.case_id, caseRow: null, alreadyConverted: true }
+  }
+  if (!isCloud) {
+    throw new Error('演示数据模式下无法转成案件')
+  }
+
+  const cause = (opts.cause ?? '').trim()
+  const stage = (opts.stage ?? '').trim()
+
+  // 1) 建案件
+  const mk = await authedFetch(`${BASE}/cases`, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      client: intake.client,
+      cause,
+      stage,
+      stage_norm: normalizeStage(stage),
+      next_action: intake.next_action ?? null,
+      next_due: intake.next_due ?? null,
+      remind_rules: intake.remind_rules ?? [],
+      first_contact: intake.first_contact ?? null,
+      signed_at: intake.signed_at ?? null,
+      // 跟踪记录 → 详细情况：明文/密文直接搬，不重新加密（避免未解锁时把密文写成打码版）
+      detail_mask: intake.note_mask ?? null,
+      detail_enc: intake.note_enc ?? null,
+      has_secret: Boolean(intake.note_enc),
+    }),
+  })
+  assertOk(mk)
+  if (!mk.ok) {
+    const t = await mk.text().catch(() => '')
+    throw new Error(`转案失败（建案件）：${mk.status} ${t.slice(0, 200)}`)
+  }
+  const created = (await mk.json()) as CaseRow[]
+  const caseId = created[0]?.id
+  if (!caseId) throw new Error('转案失败：案件已提交但未返回 id')
+
+  // 2) 回写关联
+  const link = await authedFetch(`${BASE}/intakes?id=eq.${intake.id}`, {
+    method: 'PATCH',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ case_id: caseId, converted: true, updated_at: new Date().toISOString() }),
+  })
+  assertOk(link)
+  if (!link.ok) {
+    const t = await link.text().catch(() => '')
+    throw new Error(`案件已创建（#${caseId}），但回写接案关联失败：${link.status} ${t.slice(0, 160)}`)
+  }
+
+  // 3) 迁联系人（失败不影响案件成立，仅提示）
+  try {
+    const mv = await authedFetch(`${BASE}/contacts?intake_id=eq.${intake.id}`, {
+      method: 'PATCH',
+      headers: { ...JSON_HEADERS, Prefer: 'return=minimal' },
+      body: JSON.stringify({ case_id: caseId, intake_id: null }),
+    })
+    if (!mv.ok) throw new Error(String(mv.status))
+  } catch {
+    // 联系人留在原接案下也不影响主流程，用户仍可在接案里维护电话
+  }
+
+  return { caseId, caseRow: created[0] ?? null, alreadyConverted: false }
 }
