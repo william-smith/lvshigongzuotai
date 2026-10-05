@@ -27,6 +27,9 @@ export function Login() {
    * → 服务端回「邮箱或密码不对」，而用户确信自己没输错。提交前兜底读一次 DOM 即可。
    */
   const pwRef = useRef<HTMLInputElement | null>(null)
+  /** 自建库地址/anon key 的 DOM 引用：同理，防止自动填充/粘贴后 state 为空导致「点保存没反应」 */
+  const nasBaseRef = useRef<HTMLInputElement | null>(null)
+  const nasKeyRef = useRef<HTMLInputElement | null>(null)
   const [nasKey, setNasKey] = useState('')
   const [cfgErr, setCfgErr] = useState('')
   const configured = customConfigured()
@@ -48,11 +51,16 @@ export function Login() {
   /** 保存自建库配置 → 切到自建库并刷新；之后登录请求即打到自建库 */
   function saveNasConfig(e: React.FormEvent) {
     e.preventDefault()
-    if (!nasBase.trim() || !nasKey.trim()) {
+    // 兜底：自动填充/粘贴可能不触发 React onChange，state 为空而输入框看着已填。
+    // 那种情况下若只判 state，会直接 return，用户看到的就是「点了没反应」。
+    const effBase = (nasBase || nasBaseRef.current?.value || '').trim()
+    const effKey = (nasKey || nasKeyRef.current?.value || '').trim()
+    if (!effBase || !effKey) {
       setCfgErr('请填写自建库 REST 地址和 anon key')
       return
     }
-    writeCustom({ base: nasBase.trim(), key: nasKey.trim() })
+    writeCustom({ base: effBase, key: effKey })
+    setCfgErr('')
     setBackend('custom')
     setSource('custom')
   }
@@ -197,6 +205,7 @@ export function Login() {
 
             <label className="block text-xs font-medium text-ink-2 mb-1.5">自建库 REST 地址</label>
             <input
+              ref={nasBaseRef}
               value={nasBase}
               onChange={(e) => setNasBase(e.target.value)}
               placeholder="https://你的反代域名/rest/v1"
@@ -205,6 +214,7 @@ export function Login() {
 
             <label className="block text-xs font-medium text-ink-2 mt-4 mb-1.5">自建库 anon key</label>
             <input
+              ref={nasKeyRef}
               value={nasKey}
               onChange={(e) => setNasKey(e.target.value)}
               placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
