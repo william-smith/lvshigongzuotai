@@ -32,12 +32,22 @@ export function Login() {
   const nasKeyRef = useRef<HTMLInputElement | null>(null)
   const [nasKey, setNasKey] = useState('')
   const [cfgErr, setCfgErr] = useState('')
-  const configured = customConfigured()
+  /**
+   * 自建库是否已配置 —— **必须是 state**。
+   * 原先直接写 `const configured = customConfigured()`（每次渲染读 localStorage），
+   * 于是 `writeCustom()` 写完 localStorage 后 React 并不知道它变了：
+   * `setBackend/setSource` 改的是别的 state，而 configured 本身不是 state，
+   * **组件不会重渲染** →「保存并使用自建库」点了没反应、配置表单不消失。
+   * （用户手动切一次数据源触发重渲染后才「好了」，属假象。）
+   */
+  const [configured, setConfigured] = useState(() => customConfigured())
   // 选了自建库但本机还没填配置 → 先填配置再登录（避免「要配置才能登录、但要登录才能配置」死循环）
   const needNasCfg = source === 'custom' && !configured
 
   function switchSource(s: Source) {
     if (s === source) return
+    // 切数据源时同步一次配置状态：配置可能在别处被写入/清除过
+    setConfigured(customConfigured())
     // 自建库尚未配置：先展开配置表单，不刷新（还没生效的后端，切了也登不进去）
     if (s === 'custom' && !configured) {
       setSource('custom')
@@ -61,6 +71,8 @@ export function Login() {
     }
     writeCustom({ base: effBase, key: effKey })
     setCfgErr('')
+    // 关键：configured 是 state，必须显式更新，否则界面不会切到登录表单
+    setConfigured(true)
     setBackend('custom')
     setSource('custom')
   }
