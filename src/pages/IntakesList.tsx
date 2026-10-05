@@ -25,20 +25,59 @@ const SORT_OPTIONS: SortOption<SortKey>[] = [
   { key: 'default', label: '默认顺序', defaultDir: 'desc' },
 ]
 
-function ConvertedTag({ converted }: { converted?: boolean }) {
+function ConvertedTag({
+  converted,
+  caseId,
+  onOpenCase,
+}: {
+  converted?: boolean
+  caseId?: number | null
+  onOpenCase?: (id: number) => void
+}) {
   if (converted) {
+    // 有关联案件时标签本身可点，直接进案件详情
+    const clickable = caseId != null && onOpenCase
+    const Tag = clickable ? 'button' : 'span'
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium bg-[#ECFDF3] text-ok">
+      <Tag
+        {...(clickable
+          ? {
+              type: 'button' as const,
+              onClick: (e: React.MouseEvent) => {
+                e.stopPropagation()
+                onOpenCase(caseId as number)
+              },
+              title: '跳到对应案件详情',
+            }
+          : {})}
+        className={
+          'inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium bg-[#ECFDF3] text-ok' +
+          (clickable ? ' hover:brightness-95 cursor-pointer active:scale-[0.98] transition' : '')
+        }
+      >
         <Icon name="check" className="w-2.5 h-2.5" />
         已转案件
-      </span>
+      </Tag>
     )
   }
   return <span className="inline-block px-2 py-0.5 rounded text-2xs font-medium bg-canvas text-ink-2">未转</span>
 }
 
-/** 接案↔案件软匹配：同 client + 同 first_contact 即视为对应 */
+/**
+ * 找接案对应的案件。
+ *
+ * 优先用 intakes.case_id（转案时写入的**确定关联**）；老数据可能没有 case_id，
+ * 再退回按「当事人 + 首次接触日相同」软匹配兜底。
+ *
+ * ⚠️ 软匹配不可靠：历史迁移给接案侧的 first_contact 带了约 30/31 天偏移，
+ * 与案件侧对不上，故大量已转案接案（case_id 有值、first_contact 不同）会匹配不到，
+ * 列表里就不显示「对应案件」入口。实测 38 条如此，故必须以 case_id 优先。
+ */
 function findCaseForIntake(intake: IntakeRow, cases: CaseRow[]): CaseRow | null {
+  if (intake.case_id != null) {
+    const byId = cases.find((c) => c.id === intake.case_id)
+    if (byId) return byId
+  }
   if (!intake.first_contact) return null
   return (
     cases.find(
@@ -83,7 +122,7 @@ export function IntakesList({
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
 
-  // 预计算每个 intake 对应的案件（软匹配），避免每次 render 重算
+  // 预计算每个 intake 对应的案件（case_id 优先 + 软匹配兜底），避免每次 render 重算
   const matchedCaseByIntake = useMemo(() => {
     const m = new Map<number, CaseRow>()
     for (const i of data.intakes) {
@@ -309,7 +348,7 @@ export function IntakesList({
                     <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(i.first_contact)}</td>
                     <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(i.signed_at)}</td>
                     <td className="px-3 py-3">
-                      <ConvertedTag converted={i.converted} />
+                      <ConvertedTag converted={i.converted} caseId={i.case_id} onOpenCase={onOpenCase} />
                     </td>
                     <td className="px-3 py-3 text-ink-2 truncate max-w-[260px]">
                       {i.note_mask || <span className="text-ink-3">—</span>}
@@ -388,7 +427,7 @@ export function IntakesList({
                     <div className="text-sm font-semibold">{i.client || <span className="text-ink-3">—</span>}</div>
                     <div className="text-xs text-ink-2 mt-0.5 truncate">{i.note_mask || '暂无记录'}</div>
                   </div>
-                  <ConvertedTag converted={i.converted} />
+                  <ConvertedTag converted={i.converted} caseId={i.case_id} onOpenCase={onOpenCase} />
                 </div>
                 <div className="flex items-center gap-2 mt-2.5 text-xs text-ink-3">
                   <Icon name="clock" className="w-3.5 h-3.5" />
@@ -402,17 +441,27 @@ export function IntakesList({
                   )}
                 </div>
                 {mc && (
-                  <div
+                  <span
+                    role="button"
+                    tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation()
                       onOpenCase(mc.id)
                     }}
-                    className="mt-2 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-brand-soft text-brand text-2xs font-medium"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onOpenCase(mc.id)
+                      }
+                    }}
+                    title={`跳到案件：${mc.client}（${mc.cause || '—'}）`}
+                    className="mt-2 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-brand-soft text-brand text-2xs font-medium hover:bg-brand hover:text-white cursor-pointer active:scale-[0.98] transition-colors"
                   >
                     <Icon name="case" className="w-3 h-3" />
                     对应案件：{mc.cause || mc.client}
                     <Icon name="chevron" className="w-2.5 h-2.5" />
-                  </div>
+                  </span>
                 )}
               </button>
             )
