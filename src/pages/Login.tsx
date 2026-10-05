@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { useAuth, signUp, requestPasswordReset, type SignUpResult } from '../lib/auth'
 import { activeBackend, customConfigured, setBackend, writeCustom } from '../lib/apiConfig'
@@ -18,6 +18,15 @@ export function Login() {
     activeBackend() === 'custom' ? 'custom' : 'cloud',
   )
   const [nasBase, setNasBase] = useState('')
+
+  /**
+   * 密码框 DOM 引用——专治「密码管理器自动填充不触发 React onChange」。
+   *
+   * Bitwarden 等扩展是直接改 DOM 的 value，不派发能被 React 捕获的输入事件，
+   * 于是输入框里肉眼可见一串 ●，但 state 里 pw 仍是空串，提交上去就是**空密码**
+   * → 服务端回「邮箱或密码不对」，而用户确信自己没输错。提交前兜底读一次 DOM 即可。
+   */
+  const pwRef = useRef<HTMLInputElement | null>(null)
   const [nasKey, setNasKey] = useState('')
   const [cfgErr, setCfgErr] = useState('')
   const configured = customConfigured()
@@ -66,18 +75,22 @@ export function Login() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setErr('')
-    if (!email || !pw) {
+    // 兜底：密码管理器（Bitwarden 等）直接改 DOM、不触发 React onChange 时，
+    // state 里的 pw 会是空的，而输入框看着已填。提交前按需从 DOM 取真实值。
+    const domPw = pwRef.current?.value ?? ''
+    const effPw = pw || domPw
+    if (!email || !effPw) {
       setErr('请填写邮箱和密码')
       return
     }
     setBusy(true)
     try {
-      await login(email.trim(), pw, remember)
-      // 登录成功：若本次登录的后端与挂载时不同（中途切换过数据源），刷新一次让数据层重解析；
+      await login(email.trim(), effPw, remember)
+      // 登录成功：若本次登录的后端与挂载时不同（中途切换了数据源），刷新一次让数据层重解析；
       // 同一后端则无需刷新，直接进入，避免白屏。
       if (activeBackend() !== BOOT_BACKEND) window.location.reload()
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : '登录失败')
+    } catch (err: unknown) {
+      setErr(err instanceof Error ? err.message : '登录失败')
     } finally {
       setBusy(false)
     }
@@ -256,6 +269,7 @@ export function Login() {
                 <label className="block text-xs font-medium text-ink-2 mt-4 mb-1.5">密码</label>
                 <div className="relative">
                   <input
+                    ref={pwRef}
                     type={show ? 'text' : 'password'}
                     autoComplete="current-password"
                     value={pw}

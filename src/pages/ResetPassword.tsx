@@ -30,7 +30,10 @@ export function ResetPassword({ onDone }: { onDone: () => void }) {
     }
     setBusy(true)
     try {
-      const r = await changePassword(pw)
+      // 邮件重置链接必然来自**云端**，必须显式指定 'cloud'。
+      // 若沿用「当前生效后端」，在自建库(NAS)模式下会拿 NAS 的地址与令牌去打云端 /user
+      // → Invalid API key，重置必失败。
+      const r = await changePassword(pw, 'cloud')
       if (!r.ok) {
         setErr(r.error || '重置失败，请重试')
         return

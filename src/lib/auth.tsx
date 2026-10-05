@@ -23,6 +23,11 @@ function authBaseNow(): { authBase: string; key: string } {
 /** 只有接了云端才需要登录；本地演示数据直接放行 */
 export const authEnabled = Boolean(AUTH_BASE && ANON_KEY)
 
+/** 当前生效后端（供需要显式按后端取地址/令牌的场合使用） */
+function activeBackendId(): BackendId {
+  return resolveApi().backend
+}
+
 /**
  * 登录会话按后端隔离：云端与自建库由不同的 GoTrue 实例签发 JWT（密钥不同），
  * 若共用一把全局会话，切到自建库后仍会拿云端的 token 去请求自建库——
@@ -207,6 +212,10 @@ function cloudAuth(): { authBase: string; key: string } {
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
   const { authBase, key } = cloudAuth()
   if (!authBase || !key) return { ok: false, error: '未配置云端公开库地址' }
+  // 前置自检：apikey 缺失/明显不完整时立刻说清楚，绝不能让它伪装成"密码不对"
+  if (!key.startsWith('eyJ')) {
+    return { ok: false, error: '云端 apikey 配置异常（构建期 VITE_API_KEY 未正确注入），请联系维护者' }
+  }
   try {
     const res = await timedFetch(`${authBase}/token?grant_type=password`, {
       method: 'POST',
@@ -338,9 +347,22 @@ interface TokenResp {
   msg?: string
 }
 
+/**
+ * 把 GoTrue 的错误响应翻译成可读中文。
+ *
+ * ⚠️ 绝不能把 400/401 一律当成「邮箱或密码不对」：
+ * `apikey` 无效时云端同样回 **401 Invalid API key**，用户会看到"密码错"却怎么也对不上，
+ * 真正原因（构建期注入的 key 不对 / 请求打到了自建库）被完全吞掉，极难排查。
+ * 只有 `invalid_credentials` / `email_exists` 这类**明确的凭据类**错误才算密码问题；
+ * 401 且非凭据错误 → 提示"服务鉴权异常（apikey 无效）"。
+ */
 function pickError(b: TokenResp, status: number): string {
   const raw = b.error_description || b.msg || b.error || ''
-  if (status === 400 || status === 401) return '邮箱或密码不对'
+  // 凭据类：确实是邮箱/密码不对
+  if (/invalid_credentials|email_not_confirmed|email_exists/i.test(raw)) return '邮箱或密码不对'
+  // 401 但不是凭据问题 → 多半是 apikey / 端点不对，别赖到密码上
+  if (status === 401) return raw || '服务鉴权异常（apikey 无效）'
+  if (status === 400) return raw || '登录失败（请求被拒绝）'
   if (status === 422) return raw.includes('Email') ? '邮箱格式不对' : raw || '登录失败'
   if (status === 429) return '尝试太频繁，稍等一分钟再试'
   return raw || `登录失败（HTTP ${status}）`
@@ -462,14 +484,28 @@ export async function signOut(): Promise<void> {
  * 修改登录密码（需已登录）。调 Supabase Auth 的 `PUT /user`，
  * 同样不绑定 SDK，与登录/续期共用同一套 REST 写法。
  * 成功后 Supabase 会令其他设备的会话失效，当前会话仍有效。
+ *
+ * @param backend 要改哪个后端的密码。**邮箱重置链接只可能来自云端**，故 ResetPassword
+ *   显式传 'cloud'；不传则沿用当前生效后端（设置页「修改密码」场景）。
  */
-export async function changePassword(newPassword: string): Promise<{ ok: boolean; error?: string }> {
-  const token = await getAccessToken()
-  if (!token || !AUTH_BASE || !ANON_KEY) return { ok: false, error: '未登录或尚未接入云端' }
+export async function changePassword(
+  newPassword: string,
+  backend?: BackendId,
+): Promise<{ ok: boolean; error?: string }> {
+  // ⚠️ 必须用 authBaseNow()/apiFor() **动态取**，**不能**用模块级 AUTH_BASE / ANON_KEY。
+  // 那两个常量在模块加载时就按「当时的生效后端」固定了：若当前是自建库(NAS)模式，
+  // 就会拿 NAS 的 anon key 去打（邮箱重置链接指向的）云端 `PUT /user`
+  // → 云端验签失败 → `Invalid API key`，重置密码永远不成功。
+  const r = backend ? apiFor(backend) : resolveApi()
+  const authBase = r.base ? r.base.replace(/\/rest\/v1\/?$/, '') + '/auth/v1' : ''
+  const key = r.key
+  // token 必须与 authBase 同一后端：否则拿 NAS 的 token 去请求云端 /user 同样 401。
+  const token = await sessionTokenFor(backend ?? activeBackendId())
+  if (!token || !authBase || !key) return { ok: false, error: '未登录或尚未接入云端' }
   try {
-    const res = await fetch(`${AUTH_BASE}/user`, {
+    const res = await fetch(`${authBase}/user`, {
       method: 'PUT',
-      headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { apikey: key, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: newPassword }),
     })
     const b = (await res.json().catch(() => ({}))) as TokenResp & { message?: string }
@@ -591,7 +627,16 @@ export function consumeUrlSession(): string | null {
     expires_at: Date.now() + expiresIn * 1000,
     email: params.get('email') || '',
   }
-  writeSession(s, true)
+  // 邮件链接的会话**必定来自云端**（找回密码/邮箱确认只对云端发信），
+  // 必须写进云端的存储位 `lw.auth.v1.cloud`。若沿用 writeSession()，它会按
+  // 「当前生效后端」写——在自建库(NAS)模式下就落到 NAS 的键位，
+  // 之后 changePassword(pw,'cloud') 用 sessionTokenFor('cloud') 就读不到 → 必然失败。
+  // 键名与 sessionTokenFor/sessionTag 的规则一致。
+  try {
+    localStorage.setItem('lw.auth.v1.cloud', JSON.stringify(s))
+  } catch {
+    /* ignore */
+  }
   try {
     window.history.replaceState(null, '', window.location.pathname + window.location.search)
   } catch {

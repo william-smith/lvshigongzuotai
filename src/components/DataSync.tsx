@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Icon } from './Icon'
 import { runSync, type SyncReport, type TableSyncStat } from '../lib/syncOps'
 import { readCustom, normalizeRestBase } from '../lib/apiConfig'
@@ -41,18 +41,24 @@ export function DataSync() {
   const [bindPw, setBindPw] = useState('')
   const [bindErr, setBindErr] = useState('')
   const [bindBusy, setBindBusy] = useState(false)
+  /** 绑定表单的密码框 DOM 引用：密码管理器自动填充不触发 React onChange 时兜底取值 */
+  const bindPwRef = useRef<HTMLInputElement | null>(null)
 
   const bothConfigured = Boolean(cloudBase.trim() && nasBase.trim())
 
   const bindCloud = async (e: FormEvent) => {
     e.preventDefault()
-    if (!bindEmail.trim() || !bindPw) {
+    // 兜底：密码管理器（Bitwarden 等）直接改 DOM、不触发 React onChange，
+    // 输入框看着已填但 state 里是空串 → 提交空密码 → 误报「邮箱或密码不对」。
+    const domPw = bindPwRef.current?.value ?? ''
+    const effPw = bindPw || domPw
+    if (!bindEmail.trim() || !effPw) {
       setBindErr('请填写云端账号邮箱和密码')
       return
     }
     setBindBusy(true)
     setBindErr('')
-    const r = await signInToCloud(bindEmail.trim(), bindPw)
+    const r = await signInToCloud(bindEmail.trim(), effPw)
     setBindBusy(false)
     if (!r.ok) {
       setBindErr(r.error || '登录云端失败')
@@ -147,6 +153,7 @@ export function DataSync() {
             className="w-full h-9 px-3 rounded-lg border border-line bg-white text-xs text-ink outline-none focus:border-brand mb-1.5"
           />
           <input
+            ref={bindPwRef}
             type="password"
             autoComplete="current-password"
             value={bindPw}
