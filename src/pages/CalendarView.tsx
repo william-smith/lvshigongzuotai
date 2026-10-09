@@ -52,6 +52,9 @@ export function CalendarView({
   const [syncErr, setSyncErr] = useState('')
   const [syncUrl, setSyncUrl] = useState('') // webcal:// 形式
   const [syncCopied, setSyncCopied] = useState(false)
+  // 订阅源网络层可达性：'yes' 可访问 / 'no' 不可访问 / null 未探测。
+  // 注意：网页无法获知手机日历是否真的订阅成功（原生 App 无回执），这里只验证「源可访问」。
+  const [syncReachable, setSyncReachable] = useState<null | 'yes' | 'no'>(null)
 
   // 事件：与 iCal 订阅一致的取数口径
   const events = useMemo<CalEvent[]>(() => {
@@ -129,6 +132,7 @@ export function CalendarView({
   const handleSync = async () => {
     setSyncBusy(true)
     setSyncErr('')
+    setSyncReachable(null)
     try {
       const backend = currentBackend()
       if (!subscriptionConfigured(backend)) {
@@ -146,6 +150,15 @@ export function CalendarView({
       }
       const httpsUrl = subscriptionUrl(key, backend)
       setSyncUrl(httpsUrl.replace(/^https:\/\//, 'webcal://'))
+      // 验证订阅源网络层是否可达（no-cors：能抓到域名不通/后端挂等真故障；
+      // 5xx 等仍会 resolve 为 opaque，故只代表「网络可达、服务器有响应」）。
+      // 网页无法感知手机是否真的订阅，这一步需用户在手机上确认。
+      try {
+        await fetch(httpsUrl, { method: 'GET', mode: 'no-cors', cache: 'no-store' })
+        setSyncReachable('yes')
+      } catch {
+        setSyncReachable('no')
+      }
       setSyncOpen(true)
     } catch (e) {
       setSyncErr((e as Error).message || '同步失败，请重试')
@@ -257,6 +270,23 @@ export function CalendarView({
                 <p className="text-2xs text-ink-3 leading-relaxed">
                   安卓用 ICSx⁵（点「＋」粘贴上面的链接）；iPhone 直接点此{' '}
                   <span className="font-mono">webcal://</span> 链接即可订阅系统日历。订阅后案件/接案节点到期会自动提醒。
+                </p>
+                {/* 可达性状态：验证「源可访问」，不代表手机已订阅 */}
+                {syncReachable === 'yes' && (
+                  <div className="mt-2 flex items-center gap-1.5 text-2xs text-ok">
+                    <Icon name="check" className="w-3.5 h-3.5" />
+                    订阅源可访问，可在手机日历中订阅（已生成并保存本机订阅密钥）
+                  </div>
+                )}
+                {syncReachable === 'no' && (
+                  <div className="mt-2 flex items-center gap-1.5 text-2xs text-warn">
+                    <Icon name="close" className="w-3.5 h-3.5" />
+                    订阅源暂不可访问，请检查网络或后端配置后重试
+                  </div>
+                )}
+                <p className="mt-2 text-2xs text-ink-3 leading-relaxed">
+                  如何确认成功：iPhone 点 webcal 链接后系统弹出「订阅」即成功；安卓在 ICSx⁵ 粘贴后列表出现该日历即成功。
+                  网页无法收到手机日历的回执，这一步需你在手机上确认。
                 </p>
               </>
             ) : (
