@@ -22,6 +22,7 @@ import { IntakeEditor } from './pages/IntakeEditor'
 import { TimelineEditor } from './pages/TimelineEditor'
 import { ExpenseEditor } from './pages/ExpenseEditor'
 import { MaterialsView } from './pages/MaterialsView'
+import { CalendarView } from './pages/CalendarView'
 import { Settings } from './pages/Settings'
 import { deleteTimeline } from './lib/timelineOps'
 import { deleteCase } from './lib/caseOps'
@@ -311,6 +312,17 @@ function Shell() {
             }}
             onOpenCase={(id) => openCase(id, 'cases')}
             onCreateIntake={() => setEditingIntake(null)}
+          />
+        )
+      case 'calendar':
+        return (
+          <CalendarView
+            data={data}
+            onOpenCase={(id) => openCase(id)}
+            onOpenIntake={(id) => {
+              const found = data.intakes.find((i) => i.id === id)
+              if (found) setEditingIntake(found)
+            }}
           />
         )
       case 'settings':

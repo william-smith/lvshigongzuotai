@@ -4,13 +4,14 @@ import { isCloud } from '../lib/data'
 import { useVault } from '../store/vault'
 import { Icon, type IconName } from './Icon'
 
-export type ViewKey = 'dashboard' | 'cases' | 'expenses' | 'intakes' | 'materials' | 'settings'
+export type ViewKey = 'dashboard' | 'cases' | 'expenses' | 'intakes' | 'calendar' | 'materials' | 'settings'
 
 const ITEMS: { key: ViewKey; label: string; icon: IconName; badge?: number }[] = [
   { key: 'dashboard', label: '工作台', icon: 'home' },
   { key: 'cases', label: '案件台账', icon: 'case' },
   { key: 'expenses', label: '费用总表', icon: 'money' },
   { key: 'intakes', label: '接案跟踪', icon: 'phone' },
+  { key: 'calendar', label: '日程', icon: 'calendar' },
   { key: 'materials', label: '文书与证据', icon: 'file' },
   { key: 'settings', label: '设置', icon: 'settings' },
 ]
