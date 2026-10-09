@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { normalizeStage, type CaseRow, type Dataset, type IntakeRow } from '../lib/types'
+import { currentBackend, ensureToken, subscriptionConfigured, subscriptionUrl } from '../lib/ical'
 
 /**
  * 月视图日程。
@@ -44,6 +45,13 @@ export function CalendarView({
     return { y: n.getFullYear(), m: n.getMonth() } // m: 0-11
   })
   const [selected, setSelected] = useState<string>(todayStr)
+
+  // 同步到手机日历（复用 ical.ts，与「设置 → 日历订阅」同源）
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncErr, setSyncErr] = useState('')
+  const [syncUrl, setSyncUrl] = useState('') // webcal:// 形式
+  const [syncCopied, setSyncCopied] = useState(false)
 
   // 事件：与 iCal 订阅一致的取数口径
   const events = useMemo<CalEvent[]>(() => {
@@ -117,6 +125,48 @@ export function CalendarView({
     else onOpenIntake(e.id)
   }
 
+  // 同步按钮：确保本机已有订阅密钥（ensureToken），拼出 webcal:// 链接并展开面板
+  const handleSync = async () => {
+    setSyncBusy(true)
+    setSyncErr('')
+    try {
+      const backend = currentBackend()
+      if (!subscriptionConfigured(backend)) {
+        setSyncErr('当前模式未配置日历订阅地址，请先到「设置 → 日历订阅」生成链接，再使用本同步。')
+        setSyncUrl('')
+        setSyncOpen(true)
+        return
+      }
+      const key = await ensureToken(backend)
+      if (!key) {
+        setSyncErr('未能生成订阅密钥，请稍后重试。')
+        setSyncUrl('')
+        setSyncOpen(true)
+        return
+      }
+      const httpsUrl = subscriptionUrl(key, backend)
+      setSyncUrl(httpsUrl.replace(/^https:\/\//, 'webcal://'))
+      setSyncOpen(true)
+    } catch (e) {
+      setSyncErr((e as Error).message || '同步失败，请重试')
+      setSyncUrl('')
+      setSyncOpen(true)
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
+  const copySyncUrl = () => {
+    if (!syncUrl) return
+    navigator.clipboard
+      ?.writeText(syncUrl)
+      .then(() => {
+        setSyncCopied(true)
+        window.setTimeout(() => setSyncCopied(false), 2000)
+      })
+      .catch(() => setSyncErr('复制失败，请手动长按链接复制'))
+  }
+
   return (
     <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
       {/* 桌面顶栏 */}
@@ -151,13 +201,76 @@ export function CalendarView({
               <Icon name="chevron" className="w-4 h-4" />
             </button>
           </div>
-          <button
-            onClick={goToday}
-            className="h-9 px-3 rounded-lg border border-line bg-white text-sm text-ink-2 hover:bg-canvas"
-          >
-            今天
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSync}
+              disabled={syncBusy}
+              title="同步到手机日历"
+              className="h-9 px-3 rounded-lg border border-line bg-white text-sm text-brand hover:bg-brand-soft disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <Icon name="sync" className="w-4 h-4" />
+              {syncBusy ? '同步中…' : '同步'}
+            </button>
+            <button
+              onClick={goToday}
+              className="h-9 px-3 rounded-lg border border-line bg-white text-sm text-ink-2 hover:bg-canvas"
+            >
+              今天
+            </button>
+          </div>
         </div>
+
+        {/* 同步到手机日历面板 */}
+        {syncOpen && (
+          <div className="mb-4 rounded-xl border border-line bg-white shadow-card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <Icon name="sync" className="w-4 h-4 text-brand" />
+                同步到手机日历
+              </h2>
+              <button
+                onClick={() => setSyncOpen(false)}
+                className="text-ink-3 hover:text-ink transition-colors"
+                aria-label="关闭"
+              >
+                <Icon name="close" className="w-4 h-4" />
+              </button>
+            </div>
+            {syncUrl ? (
+              <>
+                <div className="flex items-center gap-2 mb-2">
+                  <code
+                    className="flex-1 min-w-0 text-2xs font-mono text-ink-2 truncate select-all"
+                    title={syncUrl}
+                  >
+                    {syncUrl}
+                  </code>
+                  <button
+                    onClick={copySyncUrl}
+                    className={`shrink-0 h-7 px-2.5 rounded-md text-2xs border transition-colors ${
+                      syncCopied ? 'border-brand/40 bg-brand/10 text-brand' : 'border-line bg-white text-ink-2 hover:bg-canvas'
+                    }`}
+                  >
+                    {syncCopied ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <p className="text-2xs text-ink-3 leading-relaxed">
+                  安卓用 ICSx⁵（点「＋」粘贴上面的链接）；iPhone 直接点此{' '}
+                  <span className="font-mono">webcal://</span> 链接即可订阅系统日历。订阅后案件/接案节点到期会自动提醒。
+                </p>
+              </>
+            ) : (
+              <p className="text-2xs text-ink-3 leading-relaxed">
+                生成订阅链接后即可同步到手机日历。若下方出现错误提示，请按提示处理后再试。
+              </p>
+            )}
+            {syncErr && (
+              <div className="mt-2 px-3 py-2 rounded-lg bg-danger/6 border border-danger/20 text-xs text-danger">
+                {syncErr}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-col lg:flex-row gap-4">
           {/* 月历网格 */}
@@ -194,7 +307,8 @@ export function CalendarView({
                     >
                       {c.day}
                     </div>
-                    <div className="mt-0.5 space-y-0.5 overflow-hidden">
+                    {/* 桌面：文字 chip（可点开跳转，最多 3 条 + 剩余数） */}
+                    <div className="mt-0.5 hidden md:block space-y-0.5 overflow-hidden">
                       {dayEvents.slice(0, 3).map((e) => (
                         <div
                           key={e.kind + e.id}
@@ -218,6 +332,19 @@ export function CalendarView({
                       ))}
                       {dayEvents.length > 3 && (
                         <div className="text-[10px] text-ink-3 px-1">+{dayEvents.length - 3}</div>
+                      )}
+                    </div>
+                    {/* 手机：圆点 + 剩余数（点格子在下方清单看完整事项） */}
+                    <div className="mt-1.5 md:hidden flex flex-wrap gap-1">
+                      {dayEvents.slice(0, 4).map((e) => (
+                        <span
+                          key={e.kind + e.id}
+                          title={e.title}
+                          className={`w-1.5 h-1.5 rounded-full ${e.kind === 'case' ? 'bg-brand' : 'bg-ok'}`}
+                        />
+                      ))}
+                      {dayEvents.length > 4 && (
+                        <span className="text-[9px] leading-3 text-ink-3 px-0.5">+{dayEvents.length - 4}</span>
                       )}
                     </div>
                   </button>
