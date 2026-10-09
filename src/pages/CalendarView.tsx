@@ -271,6 +271,13 @@ export function CalendarView({
                   安卓用 ICSx⁵（点「＋」粘贴上面的链接）；iPhone 直接点此{' '}
                   <span className="font-mono">webcal://</span> 链接即可订阅系统日历。订阅后案件/接案节点到期会自动提醒。
                 </p>
+                {/* 电脑端（桌面 App）订阅说明 */}
+                <p className="mt-2 text-2xs text-ink-3 leading-relaxed">
+                  电脑端订阅：Windows 邮件 / Outlook、Mac 日历、Google Calendar 等支持「从 Internet 订阅日历」的客户端，可粘贴上面的链接添加。
+                  桌面端请用 <span className="font-mono">https://</span> 形式——把链接开头的{' '}
+                  <span className="font-mono">webcal://</span> 改成 <span className="font-mono">https://</span> 即可
+                  （Outlook 等桌面软件不识别 webcal://，必须用 https）。
+                </p>
                 {/* 可达性状态：验证「源可访问」，不代表手机已订阅 */}
                 {syncReachable === 'yes' && (
                   <div className="mt-2 flex items-center gap-1.5 text-2xs text-ok">
