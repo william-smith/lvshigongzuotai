@@ -93,6 +93,13 @@ interface Row {
   onlyLocal: boolean
 }
 
+/** 预览翻页清单项：同分类内可预览的文件（按当前排序） */
+interface NavRow {
+  relPath: string
+  name: string
+  handle?: FsFileHandle
+}
+
 type SortKey = 'name' | 'time' | 'type' | 'size'
 
 /** 云端行的排序时间戳：优先索引时间，退回更新时间 */
@@ -152,6 +159,9 @@ export function MaterialsView({
   // 每个分类各记各的排序（默认按名称升序）
   const [sorts, setSorts] = useState<Record<number, { key: SortKey; dir: 'asc' | 'desc' }>>({})
   const [preview, setPreview] = useState<{ name: string; handle: FsFileHandle | null } | null>(null)
+  // 预览翻页：同分类内可预览清单 + 当前索引（←/→ / 箭头 / 手机滑动共用）；单文件时为 null
+  const [navInfo, setNavInfo] = useState<{ list: NavRow[]; idx: number } | null>(null)
+  const pvBusy = useRef(false) // 翻页解析句柄是异步的，防止连按重复跳
   const [editing, setEditing] = useState(false)
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null)
@@ -472,10 +482,17 @@ export function MaterialsView({
     return joinPath(joinPath(rootPath, folderName, role), r.relPath, role)
   }
 
-  const onRowClick = async (r: Row) => {
+  const onRowClick = async (r: Row, catList: Row[]) => {
     if (isPreviewable(r.name)) {
+      // 同分类内的可预览清单（按当前排序），供 ←/→ / 箭头 / 滑动翻页；单文件时不启用
+      const navList: NavRow[] = catList
+        .filter((x) => isPreviewable(x.name))
+        .map((x) => ({ relPath: x.relPath, name: x.name, handle: x.handle }))
+      const idx = navList.findIndex((x) => x.relPath === r.relPath)
+      const nav = idx >= 0 && navList.length > 1 ? { list: navList, idx } : null
       // 本轮刚扫描过：直接用内存里的句柄
       if (r.handle) {
+        setNavInfo(nav)
         setPreview({ name: r.name, handle: r.handle })
         return
       }
@@ -489,6 +506,7 @@ export function MaterialsView({
         }
         const h = await resolveFileHandle(root.handle, folderRow?.folder_name, r.relPath)
         if (h) {
+          setNavInfo(nav)
           setPreview({ name: r.name, handle: h })
           return
         }
@@ -502,6 +520,31 @@ export function MaterialsView({
     const p = fullPath(r)
     const ok = await copyText(p)
     setMsg(ok ? `已复制路径：${p}` : `路径：${p}`)
+  }
+
+  // 预览内翻页：仅在同分类清单内移动，到头即停；目标句柄缺失时按路径现取，取不到则原地不动并提示
+  const navigatePreview = async (dir: 1 | -1) => {
+    if (!navInfo || pvBusy.current) return
+    const next = navInfo.idx + dir
+    const target = navInfo.list[next]
+    if (!target) return
+    pvBusy.current = true
+    try {
+      let h = target.handle ?? null
+      if (!h && root) {
+        const p = await permissionOf(root.handle)
+        setPerm(p)
+        if (p === 'granted') h = await resolveFileHandle(root.handle, folderRow?.folder_name, target.relPath)
+      }
+      if (!h) {
+        setMsg(`无法翻到「${target.name}」：本机找不到该文件（可能已改名/删除）或目录未授权`)
+        return
+      }
+      setNavInfo({ list: navInfo.list, idx: next })
+      setPreview({ name: target.name, handle: h })
+    } finally {
+      pvBusy.current = false
+    }
   }
 
   const disclaimer =
@@ -838,7 +881,7 @@ export function MaterialsView({
                             />
                           )}
                           <button
-                            onClick={() => void onRowClick(r)}
+                            onClick={() => void onRowClick(r, list)}
                             className="flex items-center gap-2 flex-1 min-w-0 text-left"
                             title={r.handle ? '本机打开' : '复制路径'}
                           >
@@ -955,7 +998,19 @@ export function MaterialsView({
         )}
       </div>
 
-      {preview && <DocPreview name={preview.name} handle={preview.handle} onClose={() => setPreview(null)} />}
+      {preview && (
+        <DocPreview
+          name={preview.name}
+          handle={preview.handle}
+          position={navInfo ? `${navInfo.idx + 1} / ${navInfo.list.length}` : undefined}
+          onPrev={navInfo && navInfo.idx > 0 ? () => void navigatePreview(-1) : undefined}
+          onNext={navInfo && navInfo.idx < navInfo.list.length - 1 ? () => void navigatePreview(1) : undefined}
+          onClose={() => {
+            setPreview(null)
+            setNavInfo(null)
+          }}
+        />
+      )}
 
       {editing && current && (
         <FolderEditor
