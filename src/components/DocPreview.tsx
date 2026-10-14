@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from './Icon'
 import { previewUrl, type FsFileHandle } from '../lib/fsAccess'
 import { isImage } from '../lib/docCategory'
@@ -11,6 +12,14 @@ import { isImage } from '../lib/docCategory'
  *
  * 翻页：传入 onPrev/onNext 时启用 —— 键盘 ←/→、屏幕两侧箭头按钮、手机左右滑动均可切换；
  * 不传（单文件或已到尽头）则隐藏对应方向，行为与旧版一致。
+ *
+ * ⚠️ 挂载方式：用 createPortal 挂到 document.body。
+ *   - 否则预览嵌在案件详情页 DOM 里，预览内的横向滑动会冒泡到详情页根上的
+ *     useSwipeTabs，出现「一边翻图一边切子页签」；
+ *   - 挂到 body 后脱离该 DOM 子树，原生 touch 不再外溢；同时预览以 z-50 置于
+ *     body 层，盖过底部导航（z-30）与所有页面内容，两侧箭头不会被遮挡。
+ *   - 触摸处理里仍调用 stopPropagation，挡掉经 React 事件树冒泡到 <main> 的
+ *     底部视图横滑（独立「文书与证据」页场景）。
  */
 export function DocPreview({
   name,
@@ -33,6 +42,7 @@ export function DocPreview({
   const current = useRef<string | null>(null)
   // 手机滑动：记录触摸起点 X
   const touchX = useRef<number | null>(null)
+  const swipeEnabled = !!(onPrev || onNext)
 
   useEffect(() => {
     if (!handle) return
@@ -66,26 +76,30 @@ export function DocPreview({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, onPrev, onNext])
 
-  // 左右滑动切换（仅在传入了翻页回调时启用）
-  const swipeProps =
-    onPrev || onNext
-      ? {
-          onTouchStart: (e: TouchEvent<HTMLDivElement>) => {
-            touchX.current = e.touches[0].clientX
-          },
-          onTouchEnd: (e: TouchEvent<HTMLDivElement>) => {
-            if (touchX.current == null) return
-            const dx = e.changedTouches[0].clientX - touchX.current
-            touchX.current = null
-            if (Math.abs(dx) < 50) return
-            if (dx < 0) onNext?.()
-            else onPrev?.()
-          },
-        }
-      : {}
+  // 触摸：始终阻止事件外溢（预览打开时，外层「子页签横滑 / 底部视图横滑」都不得响应），
+  // 并在启用翻页时执行左右滑动切换（阈值 50px）。
+  const onTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    touchX.current = e.touches[0]?.clientX ?? null
+  }
+  const onTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    if (!swipeEnabled) return
+    if (touchX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchX.current
+    touchX.current = null
+    if (Math.abs(dx) < 50) return
+    if (dx < 0) onNext?.()
+    else onPrev?.()
+  }
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/85 flex flex-col" onClick={onClose}>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 bg-black/85 flex flex-col"
+      onClick={onClose}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       <div
         className="h-12 shrink-0 flex items-center gap-3 px-4 text-white/90"
         onClick={(e) => e.stopPropagation()}
@@ -100,7 +114,6 @@ export function DocPreview({
       <div
         className="relative flex-1 min-h-0 flex items-center justify-center p-2 md:p-6"
         onClick={onClose}
-        {...swipeProps}
       >
         {onPrev && (
           <button
@@ -108,7 +121,7 @@ export function DocPreview({
               e.stopPropagation()
               onPrev()
             }}
-            className="absolute left-1 md:left-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white/90 flex items-center justify-center transition-colors"
+            className="absolute left-1 md:left-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/55 hover:bg-black/75 ring-1 ring-white/40 text-white flex items-center justify-center transition-colors shadow-lg"
             title="上一个 (←)"
           >
             <Icon name="chevron" className="w-6 h-6 rotate-180" />
@@ -120,7 +133,7 @@ export function DocPreview({
               e.stopPropagation()
               onNext()
             }}
-            className="absolute right-1 md:right-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white/90 flex items-center justify-center transition-colors"
+            className="absolute right-1 md:right-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/55 hover:bg-black/75 ring-1 ring-white/40 text-white flex items-center justify-center transition-colors shadow-lg"
             title="下一个 (→)"
           >
             <Icon name="chevron" className="w-6 h-6" />
@@ -149,6 +162,7 @@ export function DocPreview({
       <div className="shrink-0 text-center text-[11px] text-white/35 pb-3">
         {position ? '本机读取 · 不上传云端 · ←/→ 或左右滑动翻页 · Esc 关闭' : '本机读取 · 不上传云端 · 按 Esc 关闭'}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
