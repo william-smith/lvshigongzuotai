@@ -28,6 +28,7 @@ export type IconName =
   | 'user'
   | 'sync'
   | 'calendar'
+  | 'alert'
 
 const paths: Record<IconName, string> = {
   home: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
@@ -66,6 +67,8 @@ const paths: Record<IconName, string> = {
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0',
   sync: 'M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4',
   calendar: 'M4 7h16v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 12h16M8 3v4M16 3v4M9 16l2 2 4-4',
+  // 警示：圆角三角 + 感叹号
+  alert: 'M10.3 4.2 2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0zM12 9.5V14M12 17.3v.2',
 }
 
 export function Icon({

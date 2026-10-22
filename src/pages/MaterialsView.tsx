@@ -751,7 +751,17 @@ export function MaterialsView({
           )}
         </div>
 
-        {msg && <div className="text-xs text-ink-2 bg-white border border-line rounded-lg px-3 py-2">{msg}</div>}
+        {msg && (
+          /还没授权同步目录|授权已失效/.test(msg) ? (
+            // 需要用户行动的授权提示：琥珀色警示横幅，显著于普通灰字提示
+            <div className="flex items-center gap-2.5 text-sm font-medium text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5">
+              <Icon name="alert" className="w-[18px] h-[18px] shrink-0 text-amber-500" />
+              <span>{msg}</span>
+            </div>
+          ) : (
+            <div className="text-xs text-ink-2 bg-white border border-line rounded-lg px-3 py-2">{msg}</div>
+          )
+        )}
 
         {folderRow?.folder_name && (
           <div className="text-2xs text-ink-3 px-1">
