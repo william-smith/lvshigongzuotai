@@ -34,6 +34,8 @@ interface ExpenseView {
   dateTo: string
   amountMin: string
   amountMax: string
+  /** 视图：detail=逐笔明细（默认）；month=按月汇总（每月一行合计） */
+  mode: 'detail' | 'month'
   sortKey: ExSortKey
   sortDir: SortDir
 }
@@ -46,6 +48,7 @@ const DEFAULTS: ExpenseView = {
   dateTo: '',
   amountMin: '',
   amountMax: '',
+  mode: 'detail',
   sortKey: 'at',
   sortDir: 'desc',
 }
@@ -189,6 +192,36 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
     return { count: filtered.length, income, expense, personal, net: personal - expense }
   }, [filtered])
 
+  // 3.5) 按月汇总（基于筛选后集合）：每月一行 —— 笔数 / 开票金额(收入合计) / 个人得 / 支出 / 净额
+  const monthly = useMemo(() => {
+    const m = new Map<string, { count: number; income: number; personal: number; expense: number }>()
+    for (const x of filtered) {
+      const key = (x.at ?? '').slice(0, 7) // YYYY-MM
+      if (!key) continue
+      const g = m.get(key) ?? { count: 0, income: 0, personal: 0, expense: 0 }
+      g.count++
+      if (x.amount != null) {
+        if (x.dir === '收入') g.income += x.amount
+        else if (x.dir === '支出') g.expense += x.amount
+      }
+      if (x.personal != null) g.personal += x.personal
+      m.set(key, g)
+    }
+    const rows = [...m.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // 月份倒序，最近的在上
+      .map(([month, g]) => ({ month, ...g, net: g.personal - g.expense }))
+    const t = rows.reduce(
+      (acc, r) => ({
+        count: acc.count + r.count,
+        income: acc.income + r.income,
+        personal: acc.personal + r.personal,
+        expense: acc.expense + r.expense,
+      }),
+      { count: 0, income: 0, personal: 0, expense: 0 },
+    )
+    return { rows, total: { ...t, net: t.personal - t.expense } }
+  }, [filtered])
+
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE))
   const pageRows = sorted.slice((page - 1) * PAGE, page * PAGE)
 
@@ -255,9 +288,9 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
             <div className="text-2xs text-ink-3 mt-0.5">共 {data.expenses.length} 条</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
-            <div className="text-xs text-ink-2">总收入</div>
+            <div className="text-xs text-ink-2">总开票金额</div>
             <SecretMoney value={totals.income} className="text-xl font-semibold mt-1 tabular-nums text-ok" />
-            <div className="text-2xs text-ink-3 mt-0.5">收入类合计</div>
+            <div className="text-2xs text-ink-3 mt-0.5">开票金额合计（收入类）</div>
           </div>
           <div className="bg-white rounded-xl border border-line p-4 shadow-card">
             <div className="text-xs text-ink-2">总个人得</div>
@@ -378,6 +411,24 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
               </div>
             </div>
             <div className="flex-1" />
+            <div>
+              <div className={labelCls}>视图</div>
+              <div className="flex gap-1.5">
+                {(['detail', 'month'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setField({ mode: m })}
+                    className={`h-9 px-3 rounded-lg text-xs border ${
+                      (view.mode ?? 'detail') === m
+                        ? 'bg-ink text-white border-ink'
+                        : 'bg-white text-ink-2 border-line hover:border-ink-3'
+                    }`}
+                  >
+                    {m === 'detail' ? '明细' : '按月汇总'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               {!isDefault && (
                 <button
@@ -396,6 +447,122 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
           </div>
         </div>
 
+        {(view.mode ?? 'detail') === 'month' ? (
+          <>
+            {/* 月视图（桌面）：每月一行合计 —— 开票金额=当月收入合计，净额=个人得−支出；已套用顶部筛选 */}
+            <div className="hidden md:block bg-white rounded-xl border border-line shadow-card overflow-hidden">
+              <div className="bg-canvas text-xs text-ink-2 px-4 py-2.5">
+                按月汇总{monthly.rows.length > 0 && ` · ${monthly.rows[monthly.rows.length - 1].month} 至 ${monthly.rows[0].month}`}
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-ink-2 text-xs">
+                    <th className="text-left font-medium px-4 py-2.5">月份</th>
+                    <th className="text-right font-medium px-3 py-2.5 w-20">笔数</th>
+                    <th className="text-right font-medium px-3 py-2.5 w-32">开票金额</th>
+                    <th className="text-right font-medium px-3 py-2.5 w-32">个人得</th>
+                    <th className="text-right font-medium px-3 py-2.5 w-28">支出</th>
+                    <th className="text-right font-medium px-4 py-2.5 w-28">净额</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthly.rows.map((r) => (
+                    <tr key={r.month} className="border-t border-line">
+                      <td className="px-4 py-3 font-medium">{r.month}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-ink-3">{r.count}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-ok">
+                        <SecretMoney value={r.income} />
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums text-brand">
+                        <SecretMoney value={r.personal} />
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums">
+                        <SecretMoney value={r.expense} />
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums font-medium">
+                        <SecretMoney value={r.net} />
+                      </td>
+                    </tr>
+                  ))}
+                  {monthly.rows.length > 0 && (
+                    <tr className="border-t border-line bg-canvas font-medium">
+                      <td className="px-4 py-3">合计</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{monthly.total.count}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-ok">
+                        <SecretMoney value={monthly.total.income} />
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums text-brand">
+                        <SecretMoney value={monthly.total.personal} />
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums">
+                        <SecretMoney value={monthly.total.expense} />
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        <SecretMoney value={monthly.total.net} />
+                      </td>
+                    </tr>
+                  )}
+                  {monthly.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-16 text-center text-ink-3 text-sm">
+                        没有符合条件的费用记录
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 月视图（移动）：每月一张卡 + 合计卡 */}
+            <div className="md:hidden space-y-2">
+              {monthly.rows.map((r) => (
+                <div key={r.month} className="bg-white rounded-xl border border-line p-3.5 shadow-card">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">{r.month}</span>
+                    <span className="text-2xs text-ink-3">{r.count} 笔</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-ink-3">开票金额</span>
+                      <SecretMoney value={r.income} interactive={false} className="text-ok tabular-nums" />
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-ink-3">个人得</span>
+                      <SecretMoney value={r.personal} interactive={false} className="text-brand tabular-nums" />
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-ink-3">支出</span>
+                      <SecretMoney value={r.expense} interactive={false} className="tabular-nums" />
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-ink-3">净额</span>
+                      <SecretMoney value={r.net} interactive={false} className="font-medium tabular-nums" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {monthly.rows.length > 1 && (
+                <div className="bg-white rounded-xl border border-line p-3.5 shadow-card flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                  <span className="font-medium">合计</span>
+                  <span className="text-ink-3">{monthly.total.count} 笔</span>
+                  <span className="text-ink-3">
+                    开票 <SecretMoney value={monthly.total.income} interactive={false} className="text-ok tabular-nums" />
+                  </span>
+                  <span className="text-ink-3">
+                    个人得 <SecretMoney value={monthly.total.personal} interactive={false} className="text-brand tabular-nums" />
+                  </span>
+                  <span className="text-ink-3">
+                    净额 <SecretMoney value={monthly.total.net} interactive={false} className="font-medium tabular-nums" />
+                  </span>
+                </div>
+              )}
+              {monthly.rows.length === 0 && (
+                <div className="py-16 text-center text-ink-3 text-sm">没有符合条件的费用记录</div>
+              )}
+            </div>
+          </>
+        ) : (
+        <>
         {/* 桌面表格 */}
         <div className="hidden md:block bg-white rounded-xl border border-line shadow-card overflow-hidden">
           <table className="w-full text-sm">
@@ -508,6 +675,8 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   )
