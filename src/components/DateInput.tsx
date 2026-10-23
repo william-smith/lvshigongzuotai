@@ -136,19 +136,6 @@ export function DateInput({
   wrapperClass?: string
 }) {
   const [open, setOpen] = useState(false)
-  /**
-   * 打开后短暂「解除武装」：弹层挂载后的最初 400ms 内整张卡片 pointer-events-none。
-   * 打开弹层的那一次点击/触摸，会被浏览器重放（ghost tap / 合成 click）到刚挂载的卡片上，
-   * 命中 × / 确定 / 取消 / 清除 / 日期格子 任意一个都会立刻关闭（表现为「一开就闪退」）。
-   * 统一用 pointer-events 屏蔽，比逐个按钮做时间窗判断更彻底。
-   */
-  const [armed, setArmed] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    const t = window.setTimeout(() => setArmed(true), 400)
-    return () => window.clearTimeout(t)
-  }, [open])
 
   const init = parse(value) ?? (() => {
     const t = new Date()
@@ -165,7 +152,6 @@ export function DateInput({
     setView(new Date(base.getFullYear(), base.getMonth(), 1))
     setSel(base)
     setTime(p ? `${p.hh}:${p.mm}` : '09:00')
-    setArmed(false)
     setOpen(true)
   }
 
@@ -210,12 +196,14 @@ export function DateInput({
       {open && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={(e) => {
+            // 只认真正落在遮罩本身的点击；卡片内的点击已被卡片 stopPropagation 挡掉
+            if (e.target !== e.currentTarget) return
+            setOpen(false)
+          }}
         >
           <div
-            className={
-              'bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3 shadow-xl ' +
-              (armed ? '' : 'pointer-events-none')
-            }
+            className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3 shadow-xl"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           >
