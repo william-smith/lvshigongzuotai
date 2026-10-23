@@ -21,14 +21,10 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-      .then(() => {
-        // 新 SW 接管后，让所有已打开的页面跳回自身 URL 重新加载，
-        // 从而拉取新版本的 HTML/JS —— 用户无需手动硬刷（旧包能自动被替换）。
-        return self.clients
-          .matchAll({ type: 'window', includeUncontrolled: true })
-          .then((cs) => Promise.all(cs.map((c) => (c.navigate ? c.navigate(c.url).catch(() => {}) : Promise.resolve()))))
-      }),
+      // 不再在 activate 里强制 navigate 所有页面：那会在用户正在操作时（如刚点开日期弹层）
+      // 硬跳转整个页面，表现为「弹层一打开就闪退」。
+      // 改为 claim 后由页面侧监听 controllerchange，走 reloadWhenIdle() 在空闲时刷新。
+      .then(() => self.clients.claim()),
   )
 })
 

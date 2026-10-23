@@ -5,6 +5,7 @@ import { VaultProvider } from './store/vault'
 import { AmountPrivacyProvider } from './components/SecretMoney'
 import { API_BASE } from './lib/data'
 import { checkAppVersion } from './lib/versionCheck'
+import { reloadWhenIdle } from './lib/idleReload'
 import './index.css'
 
 // 启动即比对构建版本：线上有更新则自动刷新，避免长期跑旧包
@@ -30,12 +31,14 @@ if (API_BASE) {
 if (import.meta.env.PROD && 'serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {})
-    // 新 SW 接管后兜底重载一次，确保旧内存包被新包替换（sw.js 内也会主动 navigate）
+    // 新 SW 接管后兜底重载一次，确保旧内存包被新包替换。
+    // ⚠️ 必须走 reloadWhenIdle：直接 reload 会在用户正在操作时（如刚点开日期弹层）
+    // 把整个页面冲掉，表现为「弹层一打开就闪退」，且只在该次部署后第一次出现。
     let reloaded = false
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (reloaded) return
       reloaded = true
-      location.reload()
+      reloadWhenIdle()
     })
   })
 }

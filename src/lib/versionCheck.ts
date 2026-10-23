@@ -5,6 +5,8 @@
  * 与 sw.js 配合使用：SW 在新版本接管后会主动让已打开的页面重新加载；
  * 这里再兜一层——应用启动时比对 /version.json，不一致则强制刷新。
  */
+import { reloadWhenIdle } from './idleReload'
+
 declare const __APP_VERSION__: string
 
 const BUILD_HASH = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : ''
@@ -17,7 +19,8 @@ export function checkAppVersion(): void {
     fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { version?: string } | null) => {
-        if (d?.version && d.version !== BUILD_HASH) location.reload()
+        // 同样不能立刻 reload：会冲掉用户正在操作的弹层，表现为「一打开就闪退」
+        if (d?.version && d.version !== BUILD_HASH) reloadWhenIdle()
       })
       .catch(() => {})
   }
