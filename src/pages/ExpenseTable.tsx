@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { DateInput } from '../components/DateInput'
 import { SortMenu, SortableTh, nextSort, type SortDir, type SortOption } from '../components/SortMenu'
 import { SecretMoney, useAmountVisible } from '../components/SecretMoney'
 import { useViewPref } from '../lib/viewPrefs'
@@ -330,7 +331,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
               <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+          <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:gap-x-4">
             {/* 收支 */}
             <div>
               <div className={labelCls}>收支</div>
@@ -370,18 +371,20 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
             <div>
               <div className={labelCls}>日期范围</div>
               <div className="flex items-center gap-1.5">
-                <input
+                <DateInput
                   type="date"
                   value={view.dateFrom}
                   onChange={(e) => setField({ dateFrom: e.target.value })}
-                  className={inputCls}
+                  wrapperClass="flex-1 min-w-0"
+                  className={inputCls + ' w-full'}
                 />
-                <span className="text-ink-3">~</span>
-                <input
+                <span className="text-ink-3 shrink-0">~</span>
+                <DateInput
                   type="date"
                   value={view.dateTo}
                   onChange={(e) => setField({ dateTo: e.target.value })}
-                  className={inputCls}
+                  wrapperClass="flex-1 min-w-0"
+                  className={inputCls + ' w-full'}
                 />
               </div>
             </div>
@@ -396,9 +399,9 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   value={view.amountMin}
                   onChange={(e) => setField({ amountMin: e.target.value })}
                   placeholder="最小"
-                  className={`${inputCls} w-24`}
+                  className={`${inputCls} flex-1 min-w-0 w-full`}
                 />
-                <span className="text-ink-3">~</span>
+                <span className="text-ink-3 shrink-0">~</span>
                 <input
                   type="number"
                   step="0.01"
@@ -406,7 +409,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   value={view.amountMax}
                   onChange={(e) => setField({ amountMax: e.target.value })}
                   placeholder="最大"
-                  className={`${inputCls} w-24`}
+                  className={`${inputCls} flex-1 min-w-0 w-full`}
                 />
               </div>
             </div>

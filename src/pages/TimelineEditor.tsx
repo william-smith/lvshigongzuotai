@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { DateInput } from '../components/DateInput'
 import { useVault } from '../store/vault'
 import { deleteTimeline, saveTimeline, type TimelineDraft } from '../lib/timelineOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
@@ -230,11 +231,11 @@ export function TimelineEditor({ mode, initial, caseId, onClose, onSaved, onDele
             <>
               <div>
                 <div className="text-xs text-ink-2 font-medium mb-1.5">时间（精确到分钟，默认 09:00）</div>
-                <input
-                  ref={firstFieldRef}
+                <DateInput
                   type="datetime-local"
                   value={form.at}
                   onChange={set('at')}
+                  inputRef={firstFieldRef}
                   className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
                 />
               </div>

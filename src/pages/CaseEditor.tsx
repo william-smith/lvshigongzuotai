@@ -6,6 +6,7 @@ import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
 import { useSwipeBack } from '../lib/gestures'
 import { defaultAt, toDateTimeLocal, type CaseRow } from '../lib/types'
 import { CalendarRemindField } from '../components/CalendarRemindField'
+import { DateInput } from '../components/DateInput'
 
 type Mode = 'create' | 'edit'
 
@@ -319,7 +320,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
                   />
                 </Field>
                 <Field label="节点时间（精确到分钟，默认 09:00）">
-                  <input
+                  <DateInput
                     type="datetime-local"
                     value={form.next_due}
                     onChange={set('next_due')}
@@ -342,7 +343,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
               {/* 签单日 + 首次接触 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Field label="首次接触">
-                  <input
+                  <DateInput
                     type="date"
                     value={form.first_contact}
                     onChange={set('first_contact')}
@@ -350,7 +351,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
                   />
                 </Field>
                 <Field label="签单日">
-                  <input
+                  <DateInput
                     type="date"
                     value={form.signed_at}
                     onChange={set('signed_at')}

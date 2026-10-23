@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { CalendarRemindField } from '../components/CalendarRemindField'
+import { DateInput } from '../components/DateInput'
 import { useVault } from '../store/vault'
 import { deleteIntake, saveIntake, convertToCase, type IntakeDraft } from '../lib/intakeOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
@@ -320,7 +321,7 @@ export function IntakeEditor({ mode, initial, cases, onClose, onSaved, onDeleted
               {/* 首次接触 + 签单日 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Field label="首次接触">
-                  <input
+                  <DateInput
                     type="date"
                     value={form.first_contact}
                     onChange={set('first_contact')}
@@ -328,7 +329,7 @@ export function IntakeEditor({ mode, initial, cases, onClose, onSaved, onDeleted
                   />
                 </Field>
                 <Field label="签单日">
-                  <input
+                  <DateInput
                     type="date"
                     value={form.signed_at}
                     onChange={set('signed_at')}
@@ -412,7 +413,7 @@ export function IntakeEditor({ mode, initial, cases, onClose, onSaved, onDeleted
                 </Field>
 
                 <Field label="节点时间" hint="精确到分钟">
-                  <input
+                  <DateInput
                     type="datetime-local"
                     value={form.next_due}
                     onChange={set('next_due')}

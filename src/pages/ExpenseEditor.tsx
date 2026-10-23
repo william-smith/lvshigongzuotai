@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { DateInput } from '../components/DateInput'
 import { useVault } from '../store/vault'
 import { deleteExpense, saveExpense, type ExpenseDraft } from '../lib/expenseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
@@ -269,11 +270,11 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <div className="text-xs text-ink-2 font-medium mb-1.5">日期</div>
-                  <input
-                    ref={firstFieldRef}
+                  <DateInput
                     type="date"
                     value={form.at}
                     onChange={set('at')}
+                    inputRef={firstFieldRef}
                     className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
                   />
                 </div>
