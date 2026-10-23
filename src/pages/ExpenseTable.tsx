@@ -239,8 +239,8 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
   }
 
   const inputCls =
-    'h-9 px-2.5 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums'
-  const labelCls = 'text-2xs text-ink-3 mb-1'
+    'h-8 md:h-9 px-2.5 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand tabular-nums'
+  const labelCls = 'text-2xs text-ink-3 mb-0.5'
 
   const sortMenu = (
     <SortMenu
@@ -311,27 +311,28 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
         </div>
 
         {/* 筛选条（响应式：自动换行） */}
-        <div className="bg-white rounded-xl border border-line p-3 md:p-4 shadow-card">
+        <div className="bg-white rounded-xl border border-line p-2.5 md:p-4 shadow-card">
           {/* 移动端搜索 + 眼睛按钮 */}
-          <div className="md:hidden flex items-center gap-2 mb-3">
+          <div className="md:hidden flex items-center gap-2 mb-2">
             <div className="relative flex-1">
               <Icon name="search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <input
                 value={view.keyword}
                 onChange={(e) => setField({ keyword: e.target.value })}
                 placeholder="搜索类别 / 备注 / 案件"
-                className="w-full h-9 pl-9 pr-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+                className="w-full h-8 pl-9 pr-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
               />
             </div>
             <button
               onClick={toggleAmt}
               title={amtVisible ? '隐藏金额' : '显示金额'}
-              className="h-9 w-9 shrink-0 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center justify-center"
+              className="h-8 w-8 shrink-0 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center justify-center"
             >
               <Icon name={amtVisible ? 'eye-off' : 'eye'} className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:gap-x-4">
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-end md:gap-x-4 md:gap-y-2">
+            <div className="grid grid-cols-2 gap-2 md:contents">
             {/* 收支 */}
             <div>
               <div className={labelCls}>收支</div>
@@ -340,7 +341,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   <button
                     key={d}
                     onClick={() => setField({ direction: d })}
-                    className={`h-9 px-3 rounded-lg text-xs border ${
+                    className={`h-8 md:h-9 px-2.5 md:px-3 rounded-lg text-xs border ${
                       view.direction === d
                         ? 'bg-ink text-white border-ink'
                         : 'bg-white text-ink-2 border-line hover:border-ink-3'
@@ -357,7 +358,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
               <select
                 value={view.category}
                 onChange={(e) => setField({ category: e.target.value })}
-                className="h-9 px-2.5 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+                className="h-8 md:h-9 px-2.5 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand w-full md:w-auto"
               >
                 <option value="">全部类别</option>
                 {categories.map((c) => (
@@ -366,6 +367,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   </option>
                 ))}
               </select>
+            </div>
             </div>
             {/* 日期范围 */}
             <div>
@@ -414,6 +416,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
               </div>
             </div>
             <div className="flex-1" />
+            <div className="flex items-end gap-2 flex-wrap md:contents">
             <div>
               <div className={labelCls}>视图</div>
               <div className="flex gap-1.5">
@@ -421,7 +424,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                   <button
                     key={m}
                     onClick={() => setField({ mode: m })}
-                    className={`h-9 px-3 rounded-lg text-xs border ${
+                    className={`h-8 md:h-9 px-2.5 md:px-3 rounded-lg text-xs border ${
                       (view.mode ?? 'detail') === m
                         ? 'bg-ink text-white border-ink'
                         : 'bg-white text-ink-2 border-line hover:border-ink-3'
@@ -446,6 +449,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
                 </button>
               )}
               {sortMenu}
+            </div>
             </div>
           </div>
         </div>
