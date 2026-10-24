@@ -121,7 +121,12 @@ function DirectionTag({ dir }: { dir: '收入' | '支出' | '' }) {
 export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: (id: number) => void }) {
   const { view, patch, reset, isDefault } = useViewPref<ExpenseView>('expenses', DEFAULTS)
   const [page, setPage] = useState(1)
-  const { visible: amtVisible, toggle: toggleAmt } = useAmountVisible()
+  const { visible: amtVisible, toggle: toggleAmt, unlocked, requestUnlock } = useAmountVisible()
+  // 顶栏「显示金额」按钮：已解锁→切换本会话显隐；未解锁→弹出保险箱密码框（首次设置/解锁）
+  const onRevealOrHide = () => {
+    if (unlocked) toggleAmt()
+    else requestUnlock()
+  }
 
   const categories = useMemo(() => {
     const s = new Set<string>()
@@ -271,7 +276,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
           />
         </div>
         <button
-          onClick={toggleAmt}
+          onClick={onRevealOrHide}
           title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
           className="h-9 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1.5 shrink-0"
         >
@@ -324,7 +329,7 @@ export function ExpenseTable({ data, onOpenCase }: { data: Dataset; onOpenCase: 
               />
             </div>
             <button
-              onClick={toggleAmt}
+              onClick={onRevealOrHide}
               title={amtVisible ? '隐藏金额' : '显示金额'}
               className="h-8 w-8 shrink-0 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center justify-center"
             >

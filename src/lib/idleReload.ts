@@ -17,6 +17,14 @@ let timer: number | null = null
 let bound = false
 let fired = false
 let deadline = 0
+/**
+ * 抑制开关：登录页 / 未登录 / 会话恢复中 时为真，期间绝不自动刷新。
+ * 否则部署后首次登录时，整页刷新可能在登录会话尚未固化前触发，把人踢回登录页
+ *（即「刚发布第一次登录就闪退」）。默认 true：启动即武装的刷新请求只入队、不计时，
+ * 待 AuthProvider 在登录成功后解除抑制才真正进入倒计时。
+ */
+let suppressed = true
+let pending = false
 
 function clearTimer() {
   if (timer !== null) {
@@ -33,7 +41,7 @@ function fire() {
 }
 
 function schedule() {
-  if (fired) return
+  if (fired || suppressed) return
   clearTimer()
   const delay = Math.max(0, Math.min(IDLE_MS, deadline - Date.now()))
   timer = window.setTimeout(fire, delay)
@@ -56,11 +64,33 @@ function unbind() {
 }
 
 /**
+ * 设置抑制状态。v=true：取消任何待执行的刷新（登录页 / 未登录期间不应刷新）；
+ * v=false：若此前已请求过刷新（部署后首次），重新进入倒计时（重置 60s 上限，
+ * 避免登录页等待过久后一解除就立即刷新），用户静止 IDLE_MS 后才真正刷新。
+ */
+export function setReloadSuppressed(v: boolean): void {
+  suppressed = v
+  if (v) {
+    clearTimer()
+    unbind()
+    return
+  }
+  if (pending) {
+    deadline = Date.now() + MAX_DEFER_MS
+    bind()
+    schedule()
+  }
+}
+
+/**
  * 请求一次「空闲时刷新」。用户在操作就一直往后推，静止后才真正刷新。
  * 多处调用（SW 接管 / 版本自检）只会触发一次刷新。
+ * 若当前处于抑制态（未登录），只记账为 pending、不计时，待解除抑制再排程。
  */
 export function reloadWhenIdle(): void {
   if (fired) return
+  pending = true
+  if (suppressed) return
   if (!deadline) deadline = Date.now() + MAX_DEFER_MS
   bind()
   schedule()

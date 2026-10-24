@@ -108,7 +108,12 @@ export function CaseDetail({
       clearTimeout(toEnd)
     }
   }, [tabAnim])
-  const { visible: amtVisible, toggle: toggleAmt } = useAmountVisible()
+  const { visible: amtVisible, toggle: toggleAmt, unlocked, requestUnlock } = useAmountVisible()
+  // 顶栏「显示金额」按钮：已解锁→切换本会话显隐；未解锁→弹出保险箱密码框
+  const onRevealOrHide = () => {
+    if (unlocked) toggleAmt()
+    else requestUnlock()
+  }
 
   const timeline = useMemo(
     () => data.timeline.filter((t) => t.case_id === c.id).sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '')),
@@ -217,7 +222,7 @@ export function CaseDetail({
             <span className="text-2xs text-ink-3">共 {expenses.length} 条记录</span>
             <div className="flex items-center gap-2">
               <button
-                onClick={toggleAmt}
+                onClick={onRevealOrHide}
                 title={amtVisible ? '隐藏金额（客户在场时用）' : '显示金额'}
                 className="h-8 px-2.5 rounded-lg border border-line bg-white text-ink-2 hover:bg-canvas inline-flex items-center gap-1 text-xs"
               >

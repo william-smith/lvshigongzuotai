@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { apiFor, customConfigured, resolveApi, type BackendId } from './apiConfig'
+import { setReloadSuppressed } from './idleReload'
 
 /**
  * 登录：走 Supabase Auth 的标准 REST（GoTrue），同样不绑定 SDK。
@@ -820,6 +821,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(s)
     setReady(true)
   }, [])
+
+  /**
+   * 自动刷新（部署后换包）抑制：登录页 / 未登录 / 会话恢复中 一律抑制，避免刷新把人踢回登录页
+   *（「刚发布第一次登录就闪退」的根因）。仅当已登录（authEnabled 且 session 就绪）才允许刷新——
+   * 此时会话已固化到 localStorage，刷新后仍能恢复主界面。演示模式（authEnabled=false）不过滤，照常自动换包。
+   */
+  useEffect(() => {
+    setReloadSuppressed(authEnabled && (!ready || !session))
+  }, [ready, session, authEnabled])
 
   const login = useCallback(async (email: string, password: string, remember: boolean) => {
     const s = await signIn(email, password, remember)

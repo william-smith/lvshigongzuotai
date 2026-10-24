@@ -8,6 +8,10 @@ interface AmountVis {
   visible: boolean
   /** 一键隐藏 / 重新显示（仅控制本会话显隐，不动保险箱解锁状态） */
   toggle: () => void
+  /** 保险箱是否已解锁：未解锁时顶栏「显示金额」应弹出解锁框而非仅翻隐藏旗标 */
+  unlocked: boolean
+  /** 请求解锁（首次设置或解锁）：打开密码框；已「记住 30 天」则静默恢复，无需重输 */
+  requestUnlock: () => void
 }
 const Ctx = createContext<AmountVis | null>(null)
 
@@ -18,17 +22,21 @@ const Ctx = createContext<AmountVis | null>(null)
  * 金额数据本身不上加密，仍在内存中正常参与筛选 / 排序 / 统计。
  */
 export function AmountPrivacyProvider({ children }: { children: ReactNode }) {
-  const { unlocked } = useVault()
+  const { unlocked, requestUnlock } = useVault()
   const [hidden, setHidden] = useState(false)
   const visible = unlocked && !hidden
   return (
-    <Ctx.Provider value={{ visible, toggle: () => setHidden((h) => !h) }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ visible, toggle: () => setHidden((h) => !h), unlocked, requestUnlock }}>
+      {children}
+    </Ctx.Provider>
   )
 }
 
 /** 取金额可见状态；若 provider 未挂载，安全兜底为「可见」 */
 export function useAmountVisible(): AmountVis {
-  return useContext(Ctx) ?? { visible: true, toggle: () => {} }
+  return (
+    useContext(Ctx) ?? { visible: true, toggle: () => {}, unlocked: true, requestUnlock: () => {} }
+  )
 }
 
 /**
