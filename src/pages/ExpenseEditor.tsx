@@ -132,26 +132,21 @@ export function ExpenseEditor({ mode, initial, caseId, onClose, onSaved, onDelet
       setErr('个人得金额必须是一个数字')
       return
     }
-    if (lockedWithSecret && detailChanged) {
-      const go = window.confirm(
-        '这段「摘要」里含有加密信息，当前未解锁。\n' +
-          '现在修改并保存，被隐藏的号码/证件号将无法恢复（只保留打码版）。\n\n' +
-          '建议先取消，点「解锁」后再编辑。\n\n仍要继续保存吗？',
-      )
-      if (!go) return
-    }
-
-    // 含敏感信息但保险箱还没就绪：先确保有密钥，否则完整号码只会存成打码版、永久丢失
+    // 未解锁但本页有需加密的内容（含敏感信息的摘要、或填了金额/个人得金额）→ 弹保险箱密码框强制解锁。
+    // 用户取消则退出保存，既不落明文也不落打码版，留在本页保留输入。
     let effectiveKey: CryptoKey | null = key
-    if (detailSensitive && !key) {
+    const obtainKey = async () => {
+      if (effectiveKey) return effectiveKey
       const k = await ensureUnlocked()
-      if (k) {
-        effectiveKey = k
-      } else {
-        const go = window.confirm(
-          '未设置保险箱口令，将以打码版保存（完整号码不会上传）。\n\n仍要继续保存吗？',
-        )
-        if (!go) return
+      if (k) effectiveKey = k
+      return k
+    }
+    const amountNeedsKey =
+      !amountLocked && (form.amount.trim() !== '' || form.personal.trim() !== '')
+    if ((detailSensitive || amountNeedsKey) && !effectiveKey) {
+      if (!(await obtainKey())) {
+        setErr('已取消，敏感信息未保存')
+        return
       }
     }
 

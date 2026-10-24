@@ -102,26 +102,18 @@ export function TimelineEditor({ mode, initial, caseId, onClose, onSaved, onDele
       firstFieldRef.current?.focus()
       return
     }
-    if (lockedWithSecret && contentChanged) {
-      const go = window.confirm(
-        '这段「内容」里含有加密信息，当前未解锁。\n' +
-          '现在修改并保存，被隐藏的号码/证件号将无法恢复（只保留打码版）。\n\n' +
-          '建议先取消，点「解锁」后再编辑。\n\n仍要继续保存吗？',
-      )
-      if (!go) return
-    }
-
-    // 含敏感信息但保险箱还没就绪：先确保有密钥，否则完整号码只会存成打码版、永久丢失
+    // 未解锁但「内容」含敏感信息 → 弹保险箱密码框强制解锁；取消则退出保存，不落明文/打码版。
     let effectiveKey: CryptoKey | null = key
-    if (contentSensitive && !key) {
+    const obtainKey = async () => {
+      if (effectiveKey) return effectiveKey
       const k = await ensureUnlocked()
-      if (k) {
-        effectiveKey = k
-      } else {
-        const go = window.confirm(
-          '未设置保险箱口令，将以打码版保存（完整号码不会上传）。\n\n仍要继续保存吗？',
-        )
-        if (!go) return
+      if (k) effectiveKey = k
+      return k
+    }
+    if (contentSensitive && !effectiveKey) {
+      if (!(await obtainKey())) {
+        setErr('已取消，敏感信息未保存')
+        return
       }
     }
 

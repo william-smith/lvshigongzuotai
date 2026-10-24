@@ -61,11 +61,11 @@ async function resolveDetail(
     }
   }
 
-  if (!text) return { mask: null, enc: null }
-  // 脱敏明文永远写；密文只在解锁时写
+  if (!text) return { mask: null, enc: draft.originalEnc ?? null }
+  // 脱敏明文永远写；密文只在解锁时写，未解锁则保留原密文（避免编辑已加密记录、改成非敏感内容时静默丢弃隐藏位）
   return {
     mask: maskSensitive(text),
-    enc: key ? await encryptString(key, text) : null,
+    enc: key ? await encryptString(key, text) : draft.originalEnc ?? null,
   }
 }
 
