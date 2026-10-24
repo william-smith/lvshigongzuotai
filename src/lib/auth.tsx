@@ -676,6 +676,9 @@ export function notifyExpired(token?: string | null) {
 }
 
 let refreshing: Promise<string | null> | null = null
+/** 最近一次令牌续期是否因「网络中断」而非「鉴权失败」失败；
+ *  用于区分「会话真失效」与「后端抖动 / 部署切换」，避免误登出。 */
+let refreshNetworkError = false
 
 /**
  * 取可用的 access_token，快过期时自动续期。
@@ -687,20 +690,27 @@ export async function getAccessToken(force = false): Promise<string | null> {
   if (!s) return null
   if (!force && s.expires_at - Date.now() > 60_000) return s.access_token
   if (!s.refresh_token) return force ? null : s.access_token
+  // 每次进入都先清零：标记只代表「本次续期调用」是否因网络中断失败，
+  // 不能让一次过期网络错误误伤后续一次真正的鉴权失效登出。
+  refreshNetworkError = false
 
   if (!refreshing) {
     const usedRefresh = s.refresh_token
     refreshing = (async () => {
       let res: Response
       try {
-        res = await timedFetch(`${AUTH_BASE}/token?grant_type=refresh_token`, {
+        // ⚠️ 续期地址 / apikey 必须动态取，与登录（authBaseNow）同源：
+        // 否则在登录页切了数据源却没整页刷新的情况下，模块顶层捕获的还是旧后端，
+        // 续期打到错误端点 → 401 → notifyExpired 误清会话 → 「登录后闪回登录页」。
+        const { authBase, key } = authBaseNow()
+        res = await timedFetch(`${authBase}/token?grant_type=refresh_token`, {
           method: 'POST',
-          headers: { apikey: ANON_KEY as string, 'Content-Type': 'application/json' },
+          headers: { apikey: key, 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: usedRefresh }),
         })
       } catch {
-        // 网络异常（不是登录失效）：**不要**交出已过期的 token——交出去必然 401，
-        // 反而会触发误登出。抛出去让界面提示「网络异常」，会话原样保留。
+        // 网络异常（不是登录失效）：标记后抛出——authedFetch 据此不再误登出，会话原样保留。
+        refreshNetworkError = true
         throw new Error('网络异常，未能连接服务器，请稍后重试')
       }
       const b = (await res.json().catch(() => ({}))) as TokenResp
@@ -719,6 +729,7 @@ export async function getAccessToken(force = false): Promise<string | null> {
         // 续期期间发生了新的登录/登出 → 别用旧会话覆盖它
         return cur?.access_token ?? null
       }
+      refreshNetworkError = false
       writeSession(next)
       return next.access_token
     })().finally(() => {
@@ -740,10 +751,13 @@ export async function getAccessToken(force = false): Promise<string | null> {
  */
 export async function authedFetch(input: string, init: RequestInit = {}, retried = false): Promise<Response> {
   const token = await getAccessToken()
+  // apikey / 兜底 token 必须与数据请求同后端（动态取，不用模块顶层常量）：
+  // 切数据源未整页刷新时，模块常量会指向旧后端，导致 401 → 误登出。
+  const { key } = authBaseNow()
   const headers: Record<string, string> = {
     ...((init.headers as Record<string, string> | undefined) ?? {}),
-    apikey: (ANON_KEY as string) ?? '',
-    Authorization: `Bearer ${token ?? ANON_KEY ?? ''}`,
+    apikey: key,
+    Authorization: `Bearer ${token ?? key}`,
   }
   const res = await timedFetch(input, { ...init, headers })
   if (res.status === 401 || res.status === 403) {
@@ -754,11 +768,13 @@ export async function authedFetch(input: string, init: RequestInit = {}, retried
       try {
         fresh = await getAccessToken(true)
       } catch {
-        fresh = null // 网络异常：按失败处理，但下面 notifyExpired 会因 token 已变而不登出
+        fresh = null // 网络异常：下面会因 refreshNetworkError 而不误登出
       }
       if (fresh && fresh !== token) return authedFetch(input, init, true)
     }
-    notifyExpired(token)
+    // 仅当「令牌续期确实鉴权失败」才清空会话；若 401 源于后端抖动 / 部署切换导致的
+    // 网络中断（refreshNetworkError），不据此把刚登录成功的用户踢回登录页。
+    if (!refreshNetworkError) notifyExpired(token)
   }
   return res
 }
