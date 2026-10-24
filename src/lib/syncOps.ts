@@ -14,7 +14,7 @@
  * 全程按表分批 200 行 upsert（on_conflict=id），任何一表报错不影响其他表。
  */
 
-import { authedFetch, currentUserId } from './auth'
+import { authedFetch, currentUserId, sessionTokenFor } from './auth'
 import { resolveApi } from './apiConfig'
 
 export interface SyncEndpoint {
@@ -325,15 +325,18 @@ async function deleteTomb(ep: SyncEndpoint, tbl: string, rowId: string): Promise
   }
 }
 
-/** 写入墓碑（把一端的删除记录补到另一端，使两端认知一致） */
+/** 写入墓碑（把一端的删除记录补到另一端，使两端认知一致）
+ *  @param ownerUid 该后端的归属 uid（云端=scopeUid，NAS=nasOwnerUid）。
+ *  云端与 NAS 的 sync_tombstones 现均为 user_id NOT NULL（对齐云端多租户结构），
+ *  必须显式带归属；service_role 下 auth.uid() 为 null，不能靠列默认值。 */
 async function upsertTombs(
   ep: SyncEndpoint,
   items: Array<{ tbl: string; row_id: string; deleted_at: string }>,
+  ownerUid: string | null,
 ): Promise<void> {
   if (!items.length) return
-  const withUid = Boolean(ep.scopeUid)
-  const rows = items.map((x) => (withUid ? { ...x, user_id: ep.scopeUid } : x))
-  const conflict = withUid ? 'user_id,tbl,row_id' : 'tbl,row_id'
+  const rows = items.map((x) => ({ ...x, user_id: ownerUid }))
+  const conflict = 'user_id,tbl,row_id'
   const res = await fetch(`${cleanBase(ep.base)}/${TOMB_TABLE}?on_conflict=${conflict}`, {
     method: 'POST',
     headers: { ...headers(ep), Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -386,11 +389,13 @@ function sampleUid(rows: Row[]): string | null {
 
 /** 写入前兜底 user_id：缺失/为空时用目标库现有 uid 补上；
  *  service_role 下 auth.uid() 为 null，列默认值救不了，必须显式带值。
- *  目标库没有样本（空表）时只能删键交给默认值——若仍 NOT NULL 会在报错中显示列名。 */
-function withOwner(rows: Row[], uid: string | null): Row[] {
+ *  force=true 时无视原值、强制覆盖为 uid（用于「云端行→NAS」——
+ *  云端行带着云端 uid，必须改成 NAS 归属，不能保留外来的 uid 导致串味）。
+ *  uid 仍缺失（空表且无样本）时只能删键交给默认值——若仍 NOT NULL 会在报错中显示列名。 */
+function withOwner(rows: Row[], uid: string | null, force = false): Row[] {
   return rows.map((r) => {
     const v = r['user_id']
-    if (typeof v === 'string' && v) return r
+    if (!force && typeof v === 'string' && v) return r
     if (uid) return { ...r, user_id: uid }
     const rest = { ...r }
     delete rest['user_id']
@@ -398,16 +403,24 @@ function withOwner(rows: Row[], uid: string | null): Row[] {
   })
 }
 
-/** 写 NAS（单用户库）前剥掉 user_id 列：单用户库所有表都没有该列，
- *  带上会触发 PostgREST 400 PGRST204「Could not find the 'user_id' column」。 */
-function stripOwner(rows: Row[]): Row[] {
-  return rows.map((r) => {
-    if (!('user_id' in r)) return r
-    const rest = { ...r }
-    delete rest['user_id']
-    return rest
-  })
+/** 从 JWT 取 uid（sub 声明）；用于拿「指定后端」的归属 uid，不依赖当前生效后端。
+ *  NAS 写入需要 NAS 自己的 owner uid，不能用 currentUserId()（它会随当前模式变）。 */
+function tokenUid(token: string | null): string | null {
+  if (!token) return null
+  try {
+    const seg = token.split('.')[1]
+    if (!seg) return null
+    const json = JSON.parse(atob(seg.replace(/-/g, '+').replace(/_/g, '/')))
+    const sub = json?.sub
+    return typeof sub === 'string' && sub ? sub : null
+  } catch {
+    return null
+  }
 }
+
+// 注：NAS 迁移后所有业务表均带 user_id（NOT NULL），写 NAS 不再剥列，
+// 统一用 withOwner(toNas, nasOwnerUid, true) 强制打上 NAS 归属 uid（见下方 syncTable）。
+// 原 stripOwner() 已删除——它假设「NAS 无 user_id 列」，迁移后该假设不成立。
 
 /** 字段中文名（界面展示用；未登记的原样显示字段名） */
 const FIELD_LABEL: Record<string, string> = {
@@ -741,21 +754,26 @@ async function syncTable(
   if (table === 'cases') shared.aliveCaseIds = aliveIds()
   if (table === 'intakes') shared.aliveIntakeIds = aliveIds()
 
-  // 写 NAS（单用户库）：所有表都没有 user_id 列，必须剥掉，否则 400 PGRST204。
-  // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
+  // 写 NAS（多租户结构，user_id NOT NULL）：强制打上 NAS 归属 uid，不可剥列。
+  // 云端行带着云端 uid，必须覆盖成 NAS owner，否则会在 NAS 上留下外来的 uid 行。
+  // nasOwnerUid 优先从 NAS 已拉行采样，空表时回退到 NAS 会话 token 的 sub。
+  const nasOwnerUid = sampleUid(nRows) ?? tokenUid(sessionTokenFor('custom'))
   if (toNas.length) {
-    const stripped = stripOwner(toNas)
-    const rows = table === 'vault_meta' ? stripped.map((r) => ({ ...r, id: 1 })) : stripped
+    const owned = withOwner(toNas, nasOwnerUid, true)
+    // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
+    const rows = table === 'vault_meta' ? owned.map((r) => ({ ...r, id: 1 })) : owned
     await upsert(nas, table, rows)
   }
   // vault_meta 不回写云端：NAS 是单用户库（vault_meta 仅 id=1 一行），若把 NAS 的 id=1
   // 按 user_id 插回多租户云端会造出游离行、破坏 vault 单行使不变式。仅做 云端→NAS 单向同步，
   // 保证在 NAS 上也能用同一保险箱口令解密。其余表正常双向。
   if (table === 'vault_meta') toCloud = []
-  // 写回多租户云端时显式带上自己的 uid（service_role 下 auth.uid() 为 null，列默认值救不了）。
+  // 写回多租户云端时必须强制覆盖 uid（force=true）：NAS 行带着 NAS uid，
+  // 不覆盖会被云端 RLS（user_id=auth.uid()）过滤掉，切回云端登录就看不到数据。
+  // cloudUid 优先用云端 scopeUid（=你云端账号 uid，与读过滤同源），缺失时回退采样云端行。
   const cloudUid = SCOPED_TABLES.has(table) ? cloud.scopeUid || sampleUid(cRows) : sampleUid(cRows)
   if (toCloud.length) {
-    await upsert(cloud, table, withOwner(toCloud, cloudUid))
+    await upsert(cloud, table, withOwner(toCloud, cloudUid, true))
     await bumpSeq(cloud, table)
   }
 
@@ -851,8 +869,8 @@ export async function runSync(
       if (idx < 0) continue
       toCloudTombs.push({ tbl: key.slice(0, idx), row_id: key.slice(idx + 1), deleted_at: ts })
     }
-    if (toNasTombs.length) await upsertTombs(nas, toNasTombs)
-    if (toCloudTombs.length) await upsertTombs(cloud, toCloudTombs)
+    if (toNasTombs.length) await upsertTombs(nas, toNasTombs, tokenUid(sessionTokenFor('custom')))
+    if (toCloudTombs.length) await upsertTombs(cloud, toCloudTombs, cloud.scopeUid ?? null)
   } catch (e) {
     console.warn('[sync] 墓碑收尾异常（不影响已完成的同步）', e)
   }

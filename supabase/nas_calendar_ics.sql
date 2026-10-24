@@ -14,6 +14,7 @@ SET search_path = public, extensions, pg_catalog
 AS $$
 DECLARE
   v_hash   text := encode(digest(p_key, 'sha256'), 'hex');
+  v_owner  uuid;
   CRLF     constant text := chr(13) || chr(10);
   v_lines  text[];
   v_cal    text;
@@ -29,9 +30,9 @@ DECLARE
   v_has_rule boolean;
   v_alarm  text;
 BEGIN
-  -- key 校验
-  PERFORM 1 FROM ical_tokens WHERE token_hash = v_hash AND revoked = false;
-  IF NOT FOUND THEN
+  -- key 校验 + 取出订阅所属用户（多账号下只返回该用户的数据）
+  SELECT user_id INTO v_owner FROM ical_tokens WHERE token_hash = v_hash AND revoked = false;
+  IF v_owner IS NULL THEN
     RETURN 'BEGIN:VCALENDAR' || CRLF || 'VERSION:2.0' || CRLF
         || 'PRODID:-//lawyer-workbench//CN' || CRLF || 'END:VCALENDAR';
   END IF;
@@ -58,7 +59,7 @@ BEGIN
       next_due,
       remind_rules
     FROM cases
-    WHERE stage_norm = '在办' AND next_due IS NOT NULL
+    WHERE stage_norm = '在办' AND next_due IS NOT NULL AND user_id = v_owner
     UNION ALL
     SELECT
       'intake-' || id::text || '@lawyer-workbench' AS uid,
@@ -68,7 +69,7 @@ BEGIN
       next_due,
       remind_rules
     FROM intakes
-    WHERE next_due IS NOT NULL
+    WHERE next_due IS NOT NULL AND user_id = v_owner
     ORDER BY next_due
   LOOP
     -- next_due 为基础 naive timestamp（北京时间），转 UTC 绝对时刻输出 Z

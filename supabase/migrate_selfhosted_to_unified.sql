@@ -77,7 +77,7 @@ $$;
 -- ⚠️ 把下面这行的邮箱改成你自己的登录邮箱（必须已存在于 auth.users）
 do $$
 declare
-  owner_email text := '你的邮箱@example.com';
+  owner_email text := 'william-smith@live.cn';
   owner_uid   uuid;
   t           text;
 begin
@@ -274,7 +274,7 @@ create policy p_vault_owner on public.vault_meta
 -- 打标后需要**重新登录**才会出现在新的 access_token 中。
 do $$
 declare
-  owner_email text := '你的邮箱@example.com';   -- ⚠️ 同样改成你的邮箱
+  owner_email text := 'william-smith@live.cn';   -- ⚠️ 同样改成你的邮箱
 begin
   update auth.users
   set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"nas"}'::jsonb
