@@ -46,6 +46,7 @@ export interface TimelineRow {
   at?: string | null
   content_mask?: string | null
   content_enc?: string | null
+  updated_at?: string | null
 }
 
 /**
@@ -71,6 +72,7 @@ export interface ExpenseRow {
   detail_enc?: string | null
   amount_enc?: string | null
   personal_enc?: string | null
+  updated_at?: string | null
 }
 
 export interface MaterialRow {

@@ -155,6 +155,7 @@ export async function saveExpense(draft: ExpenseDraft, key: CryptoKey | null): P
         detail_enc: row.detail_enc,
         amount_enc: row.amount_enc,
         personal_enc: row.personal_enc,
+        updated_at: new Date().toISOString(),
       }),
     })
     assertOk(res)
@@ -189,6 +190,7 @@ export async function saveExpense(draft: ExpenseDraft, key: CryptoKey | null): P
       detail: row.detail,
       detail_enc: row.detail_enc,
       ...amountFields,
+      updated_at: new Date().toISOString(),
     }),
   })
   assertOk(res)

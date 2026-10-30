@@ -103,6 +103,7 @@ export async function saveTimeline(draft: TimelineDraft, key: CryptoKey | null):
         at: row.at,
         content_mask: row.content_mask,
         content_enc: row.content_enc,
+        updated_at: new Date().toISOString(),
       }),
     })
     assertOk(res)
@@ -122,6 +123,7 @@ export async function saveTimeline(draft: TimelineDraft, key: CryptoKey | null):
       at: row.at,
       content_mask: row.content_mask,
       content_enc: row.content_enc,
+      updated_at: new Date().toISOString(),
     }),
   })
   assertOk(res)

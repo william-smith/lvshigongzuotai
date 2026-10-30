@@ -8,8 +8,9 @@
  *   1. 两边按主键 id 各拉一次全表（数据量小，1800 行级别）；
  *   2. 只在一边的行 → 直接补到另一边；
  *   3. 两边都有 → 内容完全一致就跳过；不同则按更新时间列（updated_at）取新的覆盖旧的；
- *      表里没有 updated_at 的（contacts/timeline/expenses）退化为「非空字段更多的那个」；
- *   4. 判定不了（时间相同、字段数相同）→ 记为冲突，**两边都不动**，列出来由人决定。
+ *      所有业务表均已具备 updated_at（2026-10 起三张子表 contacts/timeline/expenses 也已补齐），
+ *      不再退化为「非空字段数」比较；
+ *   4. 判定不了（updated_at 时间相同）→ 记为冲突，**两边都不动**，列出来由人决定。
  *
  * 全程按表分批 200 行 upsert（on_conflict=id），任何一表报错不影响其他表。
  */
@@ -59,9 +60,9 @@ const UPDATED_COL: Record<SyncTable, string | null> = {
   materials: 'updated_at',
   case_folders: 'updated_at',
   vault_meta: 'updated_at',
-  contacts: null,
-  timeline: null,
-  expenses: null,
+  contacts: 'updated_at',
+  timeline: 'updated_at',
+  expenses: 'updated_at',
 }
 
 export interface TableSyncStat {
@@ -361,8 +362,10 @@ function newerThan(row: Row, ts: string, col: string | null): boolean {
 
 /** 行内容的稳定指纹（键排序后序列化），用于判断两边是否真的不同。
  *  user_id 是「实例本地」字段（各库 auth.uid() 不同），不参与两边比对，
- *  否则同一条数据会因 uid 不同被误判为「两边都改过」→ 冲突。 */
-const LOCAL_KEYS = new Set(['user_id'])
+ *  否则同一条数据会因 uid 不同被误判为「两边都改过」→ 冲突。
+ *  updated_at/created_at 是时间戳，交给 whichNewer 单独裁决先后，
+ *  不参与「内容是否一致」判断——否则每次同步搬运时间戳会导致乒乓（永不收敛）。 */
+const LOCAL_KEYS = new Set(['user_id', 'updated_at', 'created_at'])
 
 function fingerprint(r: Row): string {
   return JSON.stringify(

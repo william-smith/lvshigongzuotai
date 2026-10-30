@@ -173,7 +173,7 @@ export async function saveContact(intakeId: number, enc: string, mask: string) {
   const res = await authedFetch(`${BASE}/contacts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ intake_id: intakeId, phone_enc: enc, phone_mask: mask }),
+    body: JSON.stringify({ intake_id: intakeId, phone_enc: enc, phone_mask: mask, updated_at: new Date().toISOString() }),
   })
   if (res.status === 401 || res.status === 403) {
     throw new Error('登录已失效，请重新登录') // authedFetch 内已按需触发登出

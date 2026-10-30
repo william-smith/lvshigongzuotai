@@ -261,7 +261,7 @@ export async function convertToCase(
     const mv = await authedFetch(`${BASE}/contacts?intake_id=eq.${intake.id}`, {
       method: 'PATCH',
       headers: { ...JSON_HEADERS, Prefer: 'return=minimal' },
-      body: JSON.stringify({ case_id: caseId, intake_id: null }),
+      body: JSON.stringify({ case_id: caseId, intake_id: null, updated_at: new Date().toISOString() }),
     })
     if (!mv.ok) throw new Error(String(mv.status))
   } catch {
