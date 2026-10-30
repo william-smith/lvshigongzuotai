@@ -629,7 +629,7 @@ async function syncTable(
       table,
       id: String(src[PK]),
       caseName: caseLabelOf(src, table, caseNames) || (table === 'vault_meta' ? '保险箱' : ''),
-      label: table === 'vault_meta' ? '口令校验信息（单向 云→NAS）' : rowSummary(src, table),
+      label: table === 'vault_meta' ? '保险箱口令，以云端为准' : rowSummary(src, table),
       dir,
       kind,
       changes: changeList(fromRow, src),
