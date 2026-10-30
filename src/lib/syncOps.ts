@@ -418,9 +418,10 @@ function tokenUid(token: string | null): string | null {
   }
 }
 
-// 注：NAS 迁移后所有业务表均带 user_id（NOT NULL），写 NAS 不再剥列，
-// 统一用 withOwner(toNas, nasOwnerUid, true) 强制打上 NAS 归属 uid（见下方 syncTable）。
-// 原 stripOwner() 已删除——它假设「NAS 无 user_id 列」，迁移后该假设不成立。
+// 注：多租户 schema 里只有「根表」cases/intakes/vault_meta 带 user_id（NOT NULL），
+// 子表 contacts/timeline/expenses/materials/case_folders 无 user_id、靠 case_id/intake_id
+// 继承案件归属（见 multitenant_schema.sql 与 SCOPED_TABLES）。写库时只对根表强制打归属 uid，
+// 子表原样写、绝不塞 user_id，否则云端/NAS 都会 PGRST204「找不到 user_id 列」。
 
 /** 字段中文名（界面展示用；未登记的原样显示字段名） */
 const FIELD_LABEL: Record<string, string> = {
@@ -754,12 +755,14 @@ async function syncTable(
   if (table === 'cases') shared.aliveCaseIds = aliveIds()
   if (table === 'intakes') shared.aliveIntakeIds = aliveIds()
 
-  // 写 NAS（多租户结构，user_id NOT NULL）：强制打上 NAS 归属 uid，不可剥列。
+  // 写 NAS：只有根表（cases/intakes/vault_meta）带 user_id，才需强制打上 NAS 归属 uid；
   // 云端行带着云端 uid，必须覆盖成 NAS owner，否则会在 NAS 上留下外来的 uid 行。
+  // 子表（contacts/timeline/expenses/materials/case_folders）无 user_id 列，绝不塞该字段，
+  // 否则写 NAS 也会 PGRST204「找不到 user_id 列」。
   // nasOwnerUid 优先从 NAS 已拉行采样，空表时回退到 NAS 会话 token 的 sub。
   const nasOwnerUid = sampleUid(nRows) ?? tokenUid(sessionTokenFor('custom'))
   if (toNas.length) {
-    const owned = withOwner(toNas, nasOwnerUid, true)
+    const owned = SCOPED_TABLES.has(table) ? withOwner(toNas, nasOwnerUid, true) : toNas
     // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
     const rows = table === 'vault_meta' ? owned.map((r) => ({ ...r, id: 1 })) : owned
     await upsert(nas, table, rows)
@@ -768,12 +771,14 @@ async function syncTable(
   // 按 user_id 插回多租户云端会造出游离行、破坏 vault 单行使不变式。仅做 云端→NAS 单向同步，
   // 保证在 NAS 上也能用同一保险箱口令解密。其余表正常双向。
   if (table === 'vault_meta') toCloud = []
-  // 写回多租户云端时必须强制覆盖 uid（force=true）：NAS 行带着 NAS uid，
-  // 不覆盖会被云端 RLS（user_id=auth.uid()）过滤掉，切回云端登录就看不到数据。
+  // 写回多租户云端：只有根表（SCOPED_TABLES）才强制覆盖 uid（force=true），
+  // NAS 行带着 NAS uid，不覆盖会被云端 RLS（user_id=auth.uid()）过滤掉，切回云端登录看不到数据。
+  // 子表无 user_id 列，原样写（靠 case_id/intake_id 继承归属），塞 user_id 会 PGRST204。
   // cloudUid 优先用云端 scopeUid（=你云端账号 uid，与读过滤同源），缺失时回退采样云端行。
   const cloudUid = SCOPED_TABLES.has(table) ? cloud.scopeUid || sampleUid(cRows) : sampleUid(cRows)
   if (toCloud.length) {
-    await upsert(cloud, table, withOwner(toCloud, cloudUid, true))
+    const owned = SCOPED_TABLES.has(table) ? withOwner(toCloud, cloudUid, true) : toCloud
+    await upsert(cloud, table, owned)
     await bumpSeq(cloud, table)
   }
 
