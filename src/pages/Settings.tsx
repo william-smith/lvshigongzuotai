@@ -363,7 +363,7 @@ function CalendarCard() {
   )
 }
 
-export function Settings() {
+export function Settings({ onOpenInstall }: { onOpenInstall?: () => void }) {
   const { email } = useAuth()
   const onNas = activeBackend() === 'custom'
   const [pw, setPw] = useState('')
@@ -480,6 +480,23 @@ export function Settings() {
       <div className="max-w-[560px] mx-auto px-5 py-6 md:py-10">
         <h1 className="text-lg font-semibold text-ink">设置</h1>
         <p className="mt-1 text-xs text-ink-3">管理账户与加密设置。</p>
+
+        {/* 安装到手机（PWA）：安卓一键安装 / iOS 引导添加到主屏幕 */}
+        {onOpenInstall && (
+          <button
+            onClick={onOpenInstall}
+            className="mt-6 w-full flex items-center gap-3 rounded-xl border border-line bg-white p-4 text-left hover:bg-canvas transition-colors"
+          >
+            <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-brand/10 text-brand shrink-0">
+              <Icon name="device" className="w-5 h-5" />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-semibold text-ink">安装到手机</span>
+              <span className="block text-xs text-ink-3 mt-0.5">像 App 一样从桌面图标全屏打开工作台</span>
+            </span>
+            <Icon name="chevron" className="w-4 h-4 text-ink-3 shrink-0" />
+          </button>
+        )}
 
         {/* 账户 */}
         <Section

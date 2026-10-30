@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { BottomTabs, MobileBar, Sidebar, VIEW_ORDER, type ViewKey } from './components/Nav'
 import { UnlockDialog } from './components/UnlockDialog'
 import { VaultSetupGuide } from './components/VaultSetupGuide'
+import { InstallPWA } from './components/InstallPWA'
 import { Icon } from './components/Icon'
 import { BackendEscape } from './components/BackendEscape'
 import { AuthProvider, authEnabled, useAuth } from './lib/auth'
@@ -54,6 +55,7 @@ function Shell() {
   const [editingTimeline, setEditingTimeline] = useState<TimelineRow | null | undefined>(undefined)
   const [editingExpense, setEditingExpense] = useState<ExpenseRow | null | undefined>(undefined)
   const { ready, unlocked, requestUnlock, lock, setVerifier, key } = useVault()
+  const [openInstall, setOpenInstall] = useState<(() => void) | null>(null)
 
   /** 视图切换的 iOS 式双面板交叉滑动：切换时同时渲染「旧面板(滑出) + 新面板(滑入)」，
    *  动画结束(onAnimationEnd)后清掉旧面板，回到单面板常态。dir: 'l'=下一页/打开，'r'=上一页/返回 */
@@ -326,7 +328,7 @@ function Shell() {
           />
         )
       case 'settings':
-        return <Settings />
+        return <Settings onOpenInstall={() => openInstall?.()} />
       default:
         return <MaterialsView data={data} onOpenCase={openCase} />
     }
@@ -551,6 +553,7 @@ function Shell() {
 
       <BottomTabs view={view} onView={goto} />
       <UnlockDialog />
+      <InstallPWA onRequestOpen={setOpenInstall} />
 
       {editing !== undefined && (
         <CaseEditor
