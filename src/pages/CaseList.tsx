@@ -371,6 +371,10 @@ export function CaseList({
                   </>
                 )}
               </div>
+              <div className="flex items-center gap-2 mt-1.5 text-xs text-ink-3">
+                <Icon name="calendar" className="w-3.5 h-3.5" />
+                <span className="truncate">签单 {fmtDate(c.signed_at)}</span>
+              </div>
             </button>
           ))}
           {pageRows.length === 0 && (
