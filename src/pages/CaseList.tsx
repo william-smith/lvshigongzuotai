@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { SortMenu, SortableTh, nextSort, type SortDir, type SortOption } from '../components/SortMenu'
 import { useViewPref } from '../lib/viewPrefs'
-import { daysUntil, fmtDateTime, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
+import { daysUntil, fmtDate, fmtDateTime, normalizeStage, type CaseRow, type Dataset } from '../lib/types'
 
 type Filter = 'all' | 'active' | 'due' | 'closed'
-type SortKey = 'default' | 'client' | 'cause' | 'stage' | 'due'
+type SortKey = 'default' | 'client' | 'cause' | 'stage' | 'due' | 'signed'
 
 const PAGE = 12
 
@@ -19,6 +19,7 @@ const DEFAULTS: CaseView = { filter: 'all', sortKey: 'due', sortDir: 'asc' }
 
 const SORT_OPTIONS: SortOption<SortKey>[] = [
   { key: 'due', label: '节点日期', defaultDir: 'asc' },
+  { key: 'signed', label: '签单日', defaultDir: 'desc' },
   { key: 'client', label: '委托人', defaultDir: 'asc' },
   { key: 'cause', label: '案由', defaultDir: 'asc' },
   { key: 'stage', label: '阶段', defaultDir: 'asc' },
@@ -61,6 +62,7 @@ const isTerminal = (c: CaseRow) => ['结案', '解除委托'].includes(normalize
 
 function cmpCase(a: CaseRow, b: CaseRow, key: SortKey, dir: 1 | -1): number {
   if (key === 'due') return cmpDate(a.next_due, b.next_due, dir)
+  if (key === 'signed') return cmpDate(a.signed_at, b.signed_at, dir)
   if (key === 'stage') {
     const d = stageWeight(a.stage) - stageWeight(b.stage)
     if (d !== 0) return d * dir
@@ -264,6 +266,14 @@ export function CaseList({
                 />
                 <th className="text-left font-medium px-3 py-2.5">下一节点</th>
                 <SortableTh
+                  label="签单日"
+                  sortKey="signed"
+                  value={view.sortKey}
+                  dir={view.sortDir}
+                  onSort={onSort}
+                  className="text-left font-medium px-3 py-2.5 w-28"
+                />
+                <SortableTh
                   label="日期"
                   sortKey="due"
                   value={view.sortKey}
@@ -296,6 +306,7 @@ export function CaseList({
                 <td className="px-3 py-3 text-ink-2 truncate max-w-[220px]">
                   {isTerminal(c) ? '—' : c.next_action || '—'}
                 </td>
+                <td className="px-3 py-3 text-ink-2 text-xs">{fmtDate(c.signed_at)}</td>
                 <td className="px-3 py-3 text-ink-2 text-xs">{fmtDateTime(c.next_due)}</td>
                 <td className="px-3 py-3">
                   <DueTag due={isTerminal(c) ? null : c.next_due} />
@@ -303,7 +314,7 @@ export function CaseList({
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-16 text-center text-ink-3 text-sm">
+                  <td colSpan={7} className="px-4 py-16 text-center text-ink-3 text-sm">
                     没有符合条件的案件
                   </td>
                 </tr>
