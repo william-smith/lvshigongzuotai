@@ -766,6 +766,10 @@ async function syncTable(
     // vault_meta 在 NAS 是 id=1 的单行，按云端自增 id 写会插出第二行、破坏单用户不变式 → 强制落到 id=1。
     const rows = table === 'vault_meta' ? owned.map((r) => ({ ...r, id: 1 })) : owned
     await upsert(nas, table, rows)
+    // 写 NAS 也要对齐序列：同步把云端高 id 写进 NAS 后，若 NAS 序列不顶到 max(id)+1，
+    // 之后 NAS 原生新建（省略 id 自增）会撞上已同步进来的高 id → 23505 duplicate key。
+    // （NAS 上需存在 sync_bump_seq RPC；若无该函数，bumpSeq 内部 catch 掉只 warn，不影响同步。）
+    await bumpSeq(nas, table)
   }
   // vault_meta 不回写云端：NAS 是单用户库（vault_meta 仅 id=1 一行），若把 NAS 的 id=1
   // 按 user_id 插回多租户云端会造出游离行、破坏 vault 单行使不变式。仅做 云端→NAS 单向同步，
