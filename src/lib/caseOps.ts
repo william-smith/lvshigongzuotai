@@ -33,6 +33,8 @@ export interface CaseDraft {
   remind_rules?: string[] | null
   first_contact?: string | null
   signed_at?: string | null
+  /** 结案 / 解除委托日期（阶段进入终结态时填写） */
+  closed_at?: string | null
   /** 「详细情况」的当前文本（解锁时为原文，未解锁时为脱敏文本） */
   detail?: string | null
   /** 用户是否改动过「详细情况」；未改动则保留原密文 */
@@ -86,6 +88,7 @@ function buildRow(
     remind_rules: draft.remind_rules ?? [],
     first_contact: draft.first_contact ?? null,
     signed_at: draft.signed_at ?? null,
+    closed_at: draft.closed_at ?? null,
     detail_mask: detail.mask,
     detail_enc: detail.enc,
     has_secret: !!detail.enc,
@@ -123,6 +126,7 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
         remind_rules: row.remind_rules,
         first_contact: row.first_contact,
         signed_at: row.signed_at,
+        closed_at: row.closed_at,
         detail_mask: row.detail_mask,
         detail_enc: row.detail_enc,
         has_secret: row.has_secret,
@@ -150,6 +154,7 @@ export async function saveCase(draft: CaseDraft, key: CryptoKey | null): Promise
       remind_rules: row.remind_rules,
       first_contact: row.first_contact,
       signed_at: row.signed_at,
+      closed_at: row.closed_at,
       detail_mask: row.detail_mask,
       detail_enc: row.detail_enc,
       has_secret: row.has_secret,

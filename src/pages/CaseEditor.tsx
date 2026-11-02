@@ -4,7 +4,7 @@ import { useVault } from '../store/vault'
 import { deleteCase, saveCase, type CaseDraft } from '../lib/caseOps'
 import { decryptString, hasSensitive, maskSensitive } from '../lib/crypto'
 import { useSwipeBack } from '../lib/gestures'
-import { defaultAt, toDateTimeLocal, type CaseRow } from '../lib/types'
+import { defaultAt, toDateTimeLocal, normalizeStage, type CaseRow } from '../lib/types'
 import { CalendarRemindField } from '../components/CalendarRemindField'
 import { DateInput } from '../components/DateInput'
 
@@ -29,6 +29,7 @@ interface FormState {
   remind_rules: string[]
   first_contact: string
   signed_at: string
+  closed_at: string
   detail: string
 }
 
@@ -41,6 +42,7 @@ const emptyForm: FormState = {
   remind_rules: [],
   first_contact: '',
   signed_at: '',
+  closed_at: '',
   detail: '',
 }
 
@@ -55,6 +57,7 @@ function toForm(c: CaseRow | null): FormState {
     remind_rules: c.remind_rules ?? [],
     first_contact: c.first_contact ?? '',
     signed_at: c.signed_at ?? '',
+    closed_at: c.closed_at ?? '',
     // 先放脱敏文本；解锁后会用密文解出的原文替换
     detail: c.detail_mask ?? '',
   }
@@ -158,6 +161,7 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
         remind_rules: form.remind_rules,
         first_contact: form.first_contact || null,
         signed_at: form.signed_at || null,
+        closed_at: form.closed_at || null,
         detail: trimmedDetail || null,
         detailChanged,
         originalEnc: initial?.detail_enc ?? null,
@@ -349,6 +353,18 @@ export function CaseEditor({ mode, initial, onClose, onSaved, onDeleted }: Props
                   />
                 </Field>
               </div>
+
+              {/* 结案 / 解除委托日期（仅终结态显示） */}
+              {['结案', '解除委托'].includes(normalizeStage(form.stage)) && (
+                <Field label="结案/解除委托日期">
+                  <DateInput
+                    type="date"
+                    value={form.closed_at}
+                    onChange={set('closed_at')}
+                    className="w-full h-10 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:bg-white focus:border-brand"
+                  />
+                </Field>
+              )}
 
               {/* 详细情况 */}
               <Field

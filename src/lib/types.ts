@@ -15,6 +15,8 @@ export interface CaseRow {
   remind_rules?: string[] | null
   first_contact?: string | null
   signed_at?: string | null
+  /** 结案 / 解除委托日期（阶段进入终结态时填写） */
+  closed_at?: string | null
   detail_mask?: string | null
   detail_enc?: string | null
   has_secret?: boolean
